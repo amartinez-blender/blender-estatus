@@ -1,0 +1,284 @@
+rules_version = '2';
+
+// ============================================================
+// Blender Estatus — Reglas de Firestore
+// La seguridad REAL vive aquí: la UI solo oculta opciones.
+//
+// IMPORTANTE — mantener sincronizado con src/config.js:
+//   - dominio permitido (blendergroup.com)
+//   - lista de SuperAdmins (isConfiguredSuperAdmin)
+//   - rol por defecto ('pending')
+// ============================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---------- Helpers ----------
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isDomainUser() {
+      return isSignedIn()
+        && request.auth.token.email.lower().matches('.*@blendergroup[.]com$');
+    }
+
+    // Correos con rol SuperAdmin automático. Sincronizar con config.js.
+    function isConfiguredSuperAdmin() {
+      return request.auth.token.email.lower() in [
+        'admin@blendergroup.com'
+      ];
+    }
+
+    function userDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function userExists() {
+      return exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    // Usuario operativo: dominio correcto + registrado + activo.
+    function isStaff() {
+      return isDomainUser() && userExists() && userDoc().active == true;
+    }
+
+    function role() {
+      return userDoc().role;
+    }
+
+    function hasRole(r) {
+      return isStaff() && role() == r;
+    }
+
+    function isSuper() {
+      return hasRole('superadmin');
+    }
+
+    function isValidRole(r) {
+      return r in ['superadmin', 'sales_admin', 'sales_exec', 'production', 'warehouse', 'auditor', 'pending'];
+    }
+
+    // ---------- /users ----------
+    match /users/{userId} {
+      // Todos los usuarios del dominio leen el directorio (avatares, menciones).
+      allow read: if isDomainUser() && (userExists() || request.auth.uid == userId);
+
+      // Primer login: el usuario crea su propio perfil.
+      // Solo puede autoasignarse 'pending', o 'superadmin' si su correo
+      // está en la lista configurada.
+      allow create: if isDomainUser()
+        && request.auth.uid == userId
+        && request.resource.data.uid == userId
+        && request.resource.data.email == request.auth.token.email
+        && request.resource.data.active == true
+        && isValidRole(request.resource.data.role)
+        && (
+          request.resource.data.role == 'pending'
+          || (request.resource.data.role == 'superadmin' && isConfiguredSuperAdmin())
+        );
+
+      // SuperAdmin: todo. El propio usuario: solo campos de perfil
+      // (nunca role ni active), salvo autopromoción configurada.
+      allow update: if isSuper()
+        || (
+          isDomainUser()
+          && request.auth.uid == userId
+          && request.resource.data.active == resource.data.active
+          && (
+            request.resource.data.role == resource.data.role
+            || (request.resource.data.role == 'superadmin' && isConfiguredSuperAdmin())
+          )
+        );
+
+      allow delete: if isSuper();
+    }
+
+    // ---------- /columns ----------
+    match /columns/{columnId} {
+      allow read: if isStaff();
+      allow create, update, delete: if isSuper();
+    }
+
+    // ---------- /orderNumbers (unicidad de número de pedido) ----------
+    // create-only: si el doc existe, el número está ocupado.
+    match /orderNumbers/{orderNumber} {
+      allow read: if isStaff();
+      allow create: if (isSuper() || hasRole('sales_admin') || hasRole('sales_exec'))
+        && orderNumber.matches('^[0-9]{1,5}$')
+        && request.resource.data.createdBy == request.auth.uid;
+      allow update: if false;
+      allow delete: if isSuper();
+    }
+
+    // ---------- Helpers de tickets ----------
+    function canViewTicketData(t) {
+      return isSuper()
+        || hasRole('sales_admin')
+        || hasRole('auditor')
+        || (hasRole('sales_exec') && (t.ownerId == request.auth.uid || t.createdBy == request.auth.uid))
+        || (hasRole('production') && t.treatment == 'Fabricación')
+        || (hasRole('warehouse') && t.treatment == 'Almacén');
+    }
+
+    // Puede comentar/adjuntar/operar (excluye auditor).
+    function canOperateTicketData(t) {
+      return isSuper()
+        || hasRole('sales_admin')
+        || (hasRole('sales_exec') && (t.ownerId == request.auth.uid || t.createdBy == request.auth.uid))
+        || (hasRole('production') && t.treatment == 'Fabricación')
+        || (hasRole('warehouse') && t.treatment == 'Almacén');
+    }
+
+    function parentTicket(ticketId) {
+      return get(/databases/$(database)/documents/tickets/$(ticketId)).data;
+    }
+
+    function isValidTicket(d) {
+      return d.orderNumber is string && d.orderNumber.matches('^[0-9]{1,5}$')
+        && d.treatment in ['Fabricación', 'Almacén']
+        && d.shippingType in ['Recolección', 'Envío por cobrar', 'Envío pre-pagado']
+        && d.deliveryMode in ['Domicilio', 'Ocurre']
+        && d.status in ['Activo', 'Cerrado', 'Cancelado']
+        && d.columnId is string && d.columnId.size() > 0
+        && d.ownerId is string && d.ownerId.size() > 0
+        && (d.priority == null || d.priority in ['Baja', 'Media', 'Alta', 'Urgente'])
+        && d.addressNA is bool
+        && d.shippingAddress is string && d.shippingAddress.size() <= 500
+        && (d.addressNA == true || d.shippingAddress.size() > 0);
+    }
+
+    // ---------- /tickets ----------
+    match /tickets/{ticketId} {
+
+      function changedKeys() {
+        return request.resource.data.diff(resource.data).affectedKeys();
+      }
+
+      // Producción/Almacén solo mueven la tarjeta.
+      function onlyMoveFields() {
+        return changedKeys().hasOnly(['columnId', 'lastMovedAt', 'updatedAt']);
+      }
+
+      // Contadores que se actualizan al comentar/adjuntar.
+      function onlyCounterFields() {
+        return changedKeys().hasOnly(['commentsCount', 'attachmentsCount', 'updatedAt']);
+      }
+
+      allow read: if canViewTicketData(resource.data);
+
+      allow create: if (isSuper() || hasRole('sales_admin') || hasRole('sales_exec'))
+        && isValidTicket(request.resource.data)
+        && request.resource.data.createdBy == request.auth.uid;
+
+      allow update: if isValidTicket(request.resource.data)
+        && request.resource.data.orderNumber == resource.data.orderNumber
+        && request.resource.data.createdBy == resource.data.createdBy
+        && (
+          isSuper()
+          || hasRole('sales_admin')
+          // Ejecutivo: edita lo propio pero NO mueve de columna.
+          || (
+            hasRole('sales_exec')
+            && (resource.data.ownerId == request.auth.uid || resource.data.createdBy == request.auth.uid)
+            && request.resource.data.columnId == resource.data.columnId
+          )
+          // Producción/Almacén: solo mover dentro de su tratamiento.
+          || (hasRole('production') && resource.data.treatment == 'Fabricación' && onlyMoveFields())
+          || (hasRole('warehouse') && resource.data.treatment == 'Almacén' && onlyMoveFields())
+          // Contadores: cualquier usuario que puede operar el ticket.
+          || (canOperateTicketData(resource.data) && onlyCounterFields())
+        );
+
+      allow delete: if isSuper();
+
+      // ---------- /tickets/{id}/comments ----------
+      match /comments/{commentId} {
+        allow read: if canViewTicketData(parentTicket(ticketId));
+
+        allow create: if canOperateTicketData(parentTicket(ticketId))
+          && request.resource.data.createdBy == request.auth.uid
+          && request.resource.data.text is string
+          && request.resource.data.text.size() > 0
+          && request.resource.data.text.size() <= 2000
+          && request.resource.data.deleted == false;
+
+        // Editar / soft-delete: autor o SuperAdmin.
+        allow update: if isSuper()
+          || (
+            resource.data.createdBy == request.auth.uid
+            && canOperateTicketData(parentTicket(ticketId))
+            && request.resource.data.createdBy == resource.data.createdBy
+          );
+
+        allow delete: if isSuper();
+      }
+
+      // ---------- /tickets/{id}/attachments ----------
+      match /attachments/{attachmentId} {
+        allow read: if canViewTicketData(parentTicket(ticketId));
+
+        allow create: if canOperateTicketData(parentTicket(ticketId))
+          && request.resource.data.uploadedBy == request.auth.uid
+          && request.resource.data.fileType in ['image/jpeg', 'image/png', 'image/webp', 'application/pdf']
+          && request.resource.data.fileSize is number
+          && request.resource.data.fileSize <= 10 * 1024 * 1024;
+
+        allow update: if false;
+
+        allow delete: if isSuper()
+          || (
+            resource.data.uploadedBy == request.auth.uid
+            && canOperateTicketData(parentTicket(ticketId))
+          );
+      }
+
+      // ---------- /tickets/{id}/activity ----------
+      match /activity/{activityId} {
+        allow read: if canViewTicketData(parentTicket(ticketId));
+
+        // El historial lo escribe quien opera; es inmutable.
+        allow create: if canOperateTicketData(parentTicket(ticketId))
+          && request.resource.data.actorId == request.auth.uid;
+
+        allow update, delete: if false;
+      }
+    }
+
+    // Query collection-group de actividad (dashboard).
+    // Solo roles con vista global.
+    match /{path=**}/activity/{activityId} {
+      allow read: if isSuper() || hasRole('sales_admin') || hasRole('auditor');
+    }
+
+    // ---------- /notifications ----------
+    match /notifications/{notificationId} {
+      // Cada quien lee solo lo suyo.
+      allow read: if isStaff() && resource.data.recipientId == request.auth.uid;
+
+      // Cualquier usuario operativo (no auditor) puede notificar a otros.
+      allow create: if isStaff()
+        && role() != 'auditor'
+        && request.resource.data.read == false
+        && request.resource.data.recipientId is string;
+
+      // Solo marcar como leída la propia.
+      allow update: if isStaff()
+        && resource.data.recipientId == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']);
+
+      allow delete: if isStaff() && resource.data.recipientId == request.auth.uid;
+    }
+
+    // ---------- /settings ----------
+    match /settings/{docId} {
+      allow read: if isStaff();
+      allow write: if isSuper();
+    }
+
+    // Todo lo no declarado: denegado.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

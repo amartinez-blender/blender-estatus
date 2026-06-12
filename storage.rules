@@ -1,0 +1,50 @@
+rules_version = '2';
+
+// ============================================================
+// Blender Estatus — Reglas de Firebase Storage
+// Sincronizar el dominio con src/config.js y firebase.rules.
+//
+// Nota MVP: el control fino por rol (p. ej. que Producción solo
+// suba a tickets de Fabricación) se valida en Firestore al crear
+// la metadata del adjunto. Fase 2: usar firestore.get() aquí o
+// custom claims para replicarlo también en Storage.
+// ============================================================
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function isDomainUser() {
+      return request.auth != null
+        && request.auth.token.email.lower().matches('.*@blendergroup[.]com$');
+    }
+
+    function isAllowedType() {
+      return request.resource.contentType in [
+        'image/jpeg',
+        'image/png',
+        'image/webp',
+        'application/pdf'
+      ];
+    }
+
+    // Adjuntos de tickets: tickets/{ticketId}/{archivo}
+    match /tickets/{ticketId}/{fileName} {
+      allow read: if isDomainUser();
+
+      allow create: if isDomainUser()
+        && isAllowedType()
+        && request.resource.size > 0
+        && request.resource.size <= 10 * 1024 * 1024; // 10 MB
+
+      // No se permite sobrescribir archivos existentes.
+      allow update: if false;
+
+      allow delete: if isDomainUser();
+    }
+
+    // Cualquier otra ruta: denegada.
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

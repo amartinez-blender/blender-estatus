@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#1D1D1B">
+  <title>Blender Estatus</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+  <!-- ============ Pantalla: cargando ============ -->
+  <div id="screen-loading" class="screen">
+    <div class="screen-card">
+      <span class="spinner"></span>
+      <p>Cargando Blender Estatus…</p>
+    </div>
+  </div>
+
+  <!-- ============ Pantalla: falta config.js ============ -->
+  <div id="screen-setup" class="screen hidden">
+    <div class="screen-card screen-card-wide">
+      <div class="brand brand-lg"><span class="brand-dot"></span>Blender <strong>Estatus</strong></div>
+      <h2>Falta configuración</h2>
+      <p>No se encontró <code>src/config.js</code>.</p>
+      <ol class="setup-steps">
+        <li>Copia <code>src/config.example.js</code> como <code>src/config.js</code>.</li>
+        <li>Rellena los datos de tu proyecto Firebase.</li>
+        <li>Recarga esta página.</li>
+      </ol>
+      <p class="text-muted">Instrucciones completas en el <code>README.md</code>.</p>
+    </div>
+  </div>
+
+  <!-- ============ Pantalla: login ============ -->
+  <div id="screen-login" class="screen hidden">
+    <div class="screen-card">
+      <div class="brand brand-lg"><span class="brand-dot"></span>Blender <strong>Estatus</strong></div>
+      <p class="text-muted">Seguimiento de pedidos de Blender Group</p>
+      <button class="btn btn-primary btn-lg" id="btn-login">
+        <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M21.35 11.1H12v2.9h5.35c-.5 2.5-2.6 4.3-5.35 4.3a5.8 5.8 0 1 1 0-11.6c1.45 0 2.75.55 3.75 1.45l2.15-2.15A8.65 8.65 0 1 0 12 20.65c4.95 0 8.55-3.5 8.55-8.55 0-.35-.05-.7-.2-1Z"/></svg>
+        Continuar con Google
+      </button>
+      <p id="login-error" class="form-errors hidden" role="alert"></p>
+      <p class="text-muted text-sm">Solo cuentas <strong>@blendergroup.com</strong></p>
+    </div>
+  </div>
+
+  <!-- ============ Pantalla: usuario bloqueado ============ -->
+  <div id="screen-blocked" class="screen hidden">
+    <div class="screen-card">
+      <span class="empty-icon">🚫</span>
+      <h2>Cuenta desactivada</h2>
+      <p class="text-muted">Tu cuenta está inactiva. Contacta a un administrador.</p>
+      <button class="btn btn-ghost" id="btn-logout-blocked">Cerrar sesión</button>
+    </div>
+  </div>
+
+  <!-- ============ Pantalla: rol pendiente ============ -->
+  <div id="screen-pending" class="screen hidden">
+    <div class="screen-card">
+      <span class="empty-icon">⏳</span>
+      <h2>Cuenta en revisión</h2>
+      <p class="text-muted">Tu acceso fue creado correctamente. Un administrador debe asignarte un rol para continuar.</p>
+      <button class="btn btn-ghost" id="btn-logout-pending">Cerrar sesión</button>
+    </div>
+  </div>
+
+  <!-- ============ App ============ -->
+  <div id="app" class="hidden">
+    <header class="app-header">
+      <div class="brand"><span class="brand-dot"></span>Blender <strong>Estatus</strong></div>
+
+      <nav id="nav-tabs" class="nav-tabs" aria-label="Secciones">
+        <button class="tab active" data-view="board">Tablero</button>
+        <button class="tab" data-view="dashboard">Dashboard</button>
+        <button class="tab" data-view="admin">Admin</button>
+      </nav>
+
+      <div class="header-actions">
+        <div id="notif-wrap" class="header-drop">
+          <button class="btn btn-icon" id="btn-notifications" aria-label="Notificaciones">
+            🔔<span id="notif-badge" class="notif-badge hidden">0</span>
+          </button>
+          <div id="notif-panel" class="dropdown notif-panel hidden">
+            <div class="dropdown-head">
+              <strong>Notificaciones</strong>
+              <button class="link-btn" id="btn-mark-all">Marcar todas como leídas</button>
+            </div>
+            <div id="notif-list" class="notif-list"></div>
+          </div>
+        </div>
+
+        <div id="user-wrap" class="header-drop">
+          <button class="btn-avatar" id="user-menu-btn" aria-label="Menú de usuario">
+            <span id="user-avatar"></span>
+          </button>
+          <div id="user-menu" class="dropdown user-menu hidden">
+            <div class="dropdown-head dropdown-user">
+              <strong id="menu-user-name"></strong>
+              <span class="text-muted" id="menu-user-role"></span>
+            </div>
+            <button class="dropdown-item" id="btn-profile">Mi perfil</button>
+            <button class="dropdown-item" id="btn-logout">Cerrar sesión</button>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <main class="app-main">
+      <!-- Tablero -->
+      <section id="view-board" class="view">
+        <div class="view-toolbar">
+          <h1>Tablero</h1>
+          <div class="toolbar-actions">
+            <select class="input input-sm" id="board-status-filter" aria-label="Filtrar por estado">
+              <option value="Activo" selected>Activos</option>
+              <option value="Cerrado">Cerrados</option>
+              <option value="Cancelado">Cancelados</option>
+              <option value="Todos">Todos</option>
+            </select>
+            <button class="btn btn-primary" id="btn-new-ticket">+ Nuevo ticket</button>
+          </div>
+        </div>
+        <div id="board" class="board" aria-live="polite"></div>
+      </section>
+
+      <!-- Dashboard -->
+      <section id="view-dashboard" class="view hidden">
+        <div class="view-toolbar"><h1>Dashboard</h1></div>
+        <div id="dashboard-content"></div>
+      </section>
+
+      <!-- Admin -->
+      <section id="view-admin" class="view hidden">
+        <div class="view-toolbar"><h1>Administración</h1></div>
+        <div id="admin-tabs" class="admin-tabs"></div>
+        <div id="admin-content"></div>
+      </section>
+    </main>
+  </div>
+
+  <!-- ============ Modales ============ -->
+  <div id="ticket-modal" class="modal modal-side" role="dialog" aria-modal="true">
+    <div class="modal-panel" id="ticket-modal-content"></div>
+  </div>
+
+  <div id="form-modal" class="modal" role="dialog" aria-modal="true">
+    <div class="modal-card" id="form-modal-content"></div>
+  </div>
+
+  <div id="profile-modal" class="modal" role="dialog" aria-modal="true">
+    <div class="modal-card" id="profile-content"></div>
+  </div>
+
+  <div id="confirm-modal" class="modal modal-top" role="alertdialog" aria-modal="true">
+    <div class="modal-card modal-card-sm">
+      <div class="modal-body">
+        <h3 id="confirm-title"></h3>
+        <p id="confirm-message" class="text-muted"></p>
+      </div>
+      <footer class="modal-footer">
+        <button class="btn btn-ghost" id="btn-confirm-no">Cancelar</button>
+        <button class="btn btn-primary" id="btn-confirm-yes">Confirmar</button>
+      </footer>
+    </div>
+  </div>
+
+  <div id="toast-container" class="toast-container" aria-live="polite"></div>
+
+  <script type="module" src="src/app.js"></script>
+</body>
+</html>
