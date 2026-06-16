@@ -124,3 +124,45 @@ export async function createDemoData() {
   }
   return created;
 }
+
+// ===================== Reinicios (solo SuperAdmin) =====================
+
+// Borra todos los documentos de una colección en lotes. `perDoc` permite
+// encolar borrados adicionales (p. ej. el /orderNumbers de cada ticket).
+async function deleteAllInCollection(name, perDoc = null) {
+  const snap = await getDocs(collection(fb.db, name));
+  let batch = writeBatch(fb.db);
+  let ops = 0;
+  for (const d of snap.docs) {
+    batch.delete(d.ref);
+    ops++;
+    if (perDoc) { perDoc(batch, d); ops++; }
+    if (ops >= 450) { await batch.commit(); batch = writeBatch(fb.db); ops = 0; }
+  }
+  if (ops > 0) await batch.commit();
+  return snap.size;
+}
+
+// Reinicia las gráficas del Dashboard: borra el histórico de atrasos.
+export async function resetBreaches() {
+  const user = store.currentUser;
+  if (!user || user.role !== ROLES.SUPERADMIN) throw new Error("Solo SuperAdmin.");
+  return deleteAllInCollection("slaBreaches");
+}
+
+// Reinicia TODOS los datos operativos: tickets (+ números de pedido),
+// histórico de atrasos y notificaciones. Conserva usuarios, columnas y
+// configuración. Nota: las subcolecciones (comentarios/adjuntos/actividad)
+// y los archivos en Storage no se purgan (quedan huérfanos, ver README).
+export async function resetAllData() {
+  const user = store.currentUser;
+  if (!user || user.role !== ROLES.SUPERADMIN) throw new Error("Solo SuperAdmin.");
+
+  const tickets = await deleteAllInCollection("tickets", (batch, d) => {
+    const on = d.data().orderNumber;
+    if (on) batch.delete(doc(fb.db, "orderNumbers", String(on)));
+  });
+  const breaches = await deleteAllInCollection("slaBreaches");
+  const notifications = await deleteAllInCollection("notifications");
+  return { tickets, breaches, notifications };
+}

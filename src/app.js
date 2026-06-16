@@ -12,7 +12,7 @@ import { listenMyNotifications, renderNotificationsPanel, markAllRead } from "./
 import { renderBoard, openTicketModal, openTicketForm } from "./board.js";
 import { renderDashboard } from "./dashboard.js";
 import { initVendorFilter } from "./filters.js";
-import { ensureSeed, createDemoData } from "./seed.js";
+import { ensureSeed, createDemoData, resetAllData } from "./seed.js";
 import { listenSettings, getSla, saveSlaSettings } from "./settings.js";
 import { toast, openModal, closeModal, bindModalDismiss, avatarHtml } from "./ui.js";
 
@@ -264,7 +264,36 @@ function renderSettingsAdmin(container) {
         <li><strong>Modo demo:</strong> ${cfg.demoMode ? "Activado" : "Desactivado"}</li>
       </ul>
       ${cfg.demoMode ? `<button class="btn btn-ghost" id="btn-demo-data">Generar datos demo</button>` : ""}
+    </div>
+
+    <div class="dash-card danger-card">
+      <h4>Zona de peligro</h4>
+      <p class="text-muted">Borra todos los tickets, números de pedido, histórico de atrasos y notificaciones. Conserva usuarios, columnas y configuración. No se puede deshacer.</p>
+      <button class="btn btn-danger" id="btn-reset-all">Reestablecer todos los datos</button>
     </div>`;
+
+  $("#btn-reset-all")?.addEventListener("click", async (e) => {
+    const ok = await confirmDialog({
+      title: "Reestablecer TODOS los datos",
+      message: "Se eliminarán todos los tickets, números de pedido, atrasos y notificaciones. Usuarios, columnas y configuración se conservan. Esta acción es irreversible.",
+      confirmText: "Continuar", danger: true,
+    });
+    if (!ok) return;
+    const typed = prompt('Escribe RESET (en mayúsculas) para confirmar el borrado total:');
+    if (typed !== "RESET") {
+      toast("Reinicio cancelado.", "info");
+      return;
+    }
+    e.target.disabled = true;
+    try {
+      const r = await resetAllData();
+      toast(`Datos reiniciados: ${r.tickets} tickets, ${r.breaches} atrasos, ${r.notifications} notificaciones.`, "success");
+    } catch (err) {
+      toast("No se pudo reiniciar: " + err.message, "error");
+    } finally {
+      e.target.disabled = false;
+    }
+  });
 
   $("#btn-save-sla")?.addEventListener("click", async (e) => {
     e.target.disabled = true;

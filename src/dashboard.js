@@ -2,12 +2,13 @@
 
 import { store, $, $$, escapeHtml, toDate, relativeTime, daysSince, fmtCountdown,
   TREATMENTS, SHIPPING_TYPES, DELIVERY_MODES, TICKET_STATUSES } from "./utils.js";
-import { visibleTickets } from "./permissions.js";
+import { visibleTickets, can } from "./permissions.js";
 import { activeColumns, columnName } from "./columns.js";
 import { userName } from "./users.js";
 import { renderVendorFilter, vendorFilterMatch } from "./filters.js";
 import { fetchSlaBreaches } from "./activity.js";
-import { emptyState, loadingState } from "./ui.js";
+import { resetBreaches } from "./seed.js";
+import { emptyState, loadingState, toast, confirmDialog } from "./ui.js";
 
 const filters = {
   dateFrom: "", dateTo: "", columnId: "", treatment: "", shippingType: "", status: "",
@@ -58,7 +59,11 @@ export function renderDashboard() {
     <div id="dash-metrics"></div>
 
     <section class="detail-section">
-      <h3>Atrasos (histórico)</h3>
+      <div class="section-head">
+        <h3>Atrasos (histórico)</h3>
+        ${can(store.currentUser, "settings:manage")
+          ? `<button class="btn btn-ghost btn-danger-text" id="btn-reset-graphs">Reestablecer gráficas</button>` : ""}
+      </div>
       <p class="text-muted">Tarjetas que se atrasaron en algún momento, aunque su estatus actual sea otro.</p>
       <div class="breach-phase-filter" id="breach-phase-filter">
         ${BREACH_PHASES.map((p) => `
@@ -94,6 +99,26 @@ export function renderDashboard() {
 
   // Filtro de vendedor compartido (multi-selección). Refresca solo las métricas.
   renderVendorFilter($("#dash-vendor-filter"), () => { renderMetrics(); renderBreaches(); });
+
+  $("#btn-reset-graphs")?.addEventListener("click", async (e) => {
+    const ok = await confirmDialog({
+      title: "Reestablecer gráficas",
+      message: "Se borrará todo el histórico de atrasos del Dashboard. Esta acción no se puede deshacer.",
+      confirmText: "Reestablecer", danger: true,
+    });
+    if (!ok) return;
+    e.target.disabled = true;
+    try {
+      const n = await resetBreaches();
+      breachCache = null;
+      toast(`Histórico de atrasos reiniciado (${n} registros).`, "success");
+      renderBreaches();
+    } catch (err) {
+      toast("No se pudo reiniciar: " + err.message, "error");
+    } finally {
+      e.target.disabled = false;
+    }
+  });
 
   renderMetrics();
   renderBreaches();

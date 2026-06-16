@@ -751,6 +751,12 @@ html[data-theme="dark"] .notif-item.is-unread { background: #2B2710; }
   .app-header .brand-logo { max-width: 84px; }
 }
 
+/* Encabezado de sección con acción a la derecha */
+.section-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+
+/* Tarjeta de "zona de peligro" en Admin */
+.danger-card { border: 1.5px solid var(--color-danger); margin-top: 12px; }
+
 /* Logo de la empresa: variante clara/oscura según el tema.
    Se escopa a .app-header para ganar a la regla de tamaño .app-header .brand-logo. */
 .app-header .logo-dark { display: none; }

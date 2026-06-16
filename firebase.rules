@@ -305,8 +305,8 @@ service cloud.firestore {
 
     // ---------- /notifications ----------
     match /notifications/{notificationId} {
-      // Cada quien lee solo lo suyo.
-      allow read: if isStaff() && resource.data.recipientId == request.auth.uid;
+      // Cada quien lee solo lo suyo; el SuperAdmin puede leer todas (reinicio).
+      allow read: if isSuper() || (isStaff() && resource.data.recipientId == request.auth.uid);
 
       // Cualquier usuario operativo (no auditor) puede notificar a otros.
       allow create: if isStaff()
@@ -319,7 +319,7 @@ service cloud.firestore {
         && resource.data.recipientId == request.auth.uid
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']);
 
-      allow delete: if isStaff() && resource.data.recipientId == request.auth.uid;
+      allow delete: if isSuper() || (isStaff() && resource.data.recipientId == request.auth.uid);
     }
 
     // ---------- /slaBreaches (analítica histórica de atrasos) ----------
@@ -331,7 +331,9 @@ service cloud.firestore {
         && role() != 'auditor'
         && request.resource.data.actorId == request.auth.uid
         && request.resource.data.lateMs is number;
-      allow update, delete: if false;
+      allow update: if false;
+      // Solo SuperAdmin puede borrarlos (botón "Reestablecer gráficas").
+      allow delete: if isSuper();
     }
 
     // ---------- /settings ----------
