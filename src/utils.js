@@ -3,12 +3,33 @@
 // ===================== Catálogos =====================
 export const TREATMENTS = ["Fabricación", "Almacén"];
 export const SHIPPING_TYPES = ["Recolección", "Envío por cobrar", "Envío pre-pagado"];
-export const DELIVERY_MODES = ["Domicilio", "Ocurre"];
+export const DELIVERY_MODES = ["Domicilio", "Ocurre", "Recolección"];
+
+// Tipos de envío que envían el ticket a la columna de cotización.
+export const QUOTE_SHIPPING_TYPES = ["Envío por cobrar", "Envío pre-pagado"];
+
+// Nombres de columnas usados por el routing automático al crear un ticket.
+export const ROUTING_COLUMN_NAMES = {
+  FABRICACION: "Fabricación",
+  ALMACEN: "Almacén",
+  COTIZACION: "Cotización de envío",
+  COTIZACION_LISTA: "Cotización de envío lista",
+};
+
+// Formatea un monto a moneda mexicana: "$1,234.50 MXN".
+export function fmtMoney(value) {
+  const n = Number(value);
+  if (!isFinite(n)) return "—";
+  return new Intl.NumberFormat("es-MX", {
+    style: "currency", currency: "MXN", minimumFractionDigits: 2,
+  }).format(n) + " MXN";
+}
 export const PRIORITIES = ["Baja", "Media", "Alta", "Urgente"];
 export const TICKET_STATUSES = ["Activo", "Cerrado", "Cancelado"];
 export const DEFAULT_COLUMNS = [
   "Nuevo",
   "Cotización de envío",
+  "Cotización de envío lista",
   "Fabricación",
   "Almacén",
   "Listos para recolección",
@@ -30,8 +51,19 @@ export const store = {
   columns: [],
   tickets: [],
   notifications: [],
+  vendorFilter: [],    // uids de vendedores seleccionados; [] = todos
+  settings: null,      // doc /settings/app (incluye SLA de Producción/Almacén)
   unsubs: {},          // funciones unsubscribe de listeners activos
 };
+
+// Normaliza texto para comparaciones tolerantes a acentos/mayúsculas.
+export function normalize(str) {
+  return String(str || "")
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .trim()
+    .toLowerCase();
+}
 
 // ===================== Bus de eventos =====================
 const bus = new EventTarget();
@@ -92,6 +124,23 @@ export function daysSince(ts) {
   const d = toDate(ts);
   if (!d) return 0;
   return Math.floor((Date.now() - d.getTime()) / 86400000);
+}
+
+// Formatea una cuenta regresiva en ms a texto corto: "2d 3h", "5h 12m", "8m".
+export function fmtCountdown(ms) {
+  if (ms <= 0) return "Vencido";
+  const totalMin = Math.floor(ms / 60000);
+  const d = Math.floor(totalMin / 1440);
+  const h = Math.floor((totalMin % 1440) / 60);
+  const m = totalMin % 60;
+  if (d > 0) return `${d}d ${h}h`;
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
+}
+
+// Convierte horas+minutos a milisegundos.
+export function durationToMs(d) {
+  return ((d?.hours || 0) * 60 + (d?.minutes || 0)) * 60000;
 }
 
 // ===================== Varios =====================

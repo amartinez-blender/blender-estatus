@@ -1,7 +1,7 @@
 // app.js — Punto de entrada: configuración, auth, router y orquestación de vistas.
 
 import { initFirebase } from "./firebase.js";
-import { store, on, $, $$, escapeHtml } from "./utils.js";
+import { store, on, emit, $, $$, escapeHtml } from "./utils.js";
 import { initAuth, login, logout } from "./auth.js";
 import { ROLES, roleLabel } from "./roles.js";
 import { can } from "./permissions.js";
@@ -11,18 +11,42 @@ import { listenTickets } from "./tickets.js";
 import { listenMyNotifications, renderNotificationsPanel, markAllRead } from "./notifications.js";
 import { renderBoard, openTicketModal, openTicketForm } from "./board.js";
 import { renderDashboard } from "./dashboard.js";
+import { initVendorFilter } from "./filters.js";
 import { ensureSeed, createDemoData } from "./seed.js";
+import { listenSettings, getSla, saveSlaSettings } from "./settings.js";
 import { toast, openModal, closeModal, bindModalDismiss, avatarHtml } from "./ui.js";
 
 let currentView = "board";
 let appStarted = false;
 let lastRole = null;
+let slaTimer = null;
 
 // ============================================================
 // Arranque
 // ============================================================
 
+// ===================== Modo nocturno (req. 9) =====================
+function applyTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  const btn = $("#btn-theme");
+  if (btn) {
+    btn.textContent = theme === "dark" ? "☀️" : "🌙";
+    btn.title = theme === "dark" ? "Modo claro" : "Modo nocturno";
+  }
+}
+function initTheme() {
+  let saved = "light";
+  try { saved = localStorage.getItem("be-theme") || "light"; } catch {}
+  applyTheme(saved);
+}
+function toggleTheme() {
+  const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+  try { localStorage.setItem("be-theme", next); } catch {}
+  applyTheme(next);
+}
+
 async function boot() {
+  initTheme();
   bindModalDismiss();
   bindStaticEvents();
 
@@ -74,8 +98,10 @@ function handleUserReady(user) {
 
   if (!appStarted || roleChanged) {
     appStarted = true;
+    initVendorFilter(user); // preselecciona al propio vendedor (req. 7)
     startDataListeners();
     ensureSeed();
+    startSlaTicker();
   }
 
   showScreen("app");
@@ -89,6 +115,13 @@ function startDataListeners() {
   listenColumns();
   listenTickets(); // queries según rol (ver tickets.js)
   listenMyNotifications();
+  listenSettings(); // SLA y configuración general
+}
+
+// Emite "sla:tick" cada 30 s para refrescar cuentas regresivas en vivo.
+function startSlaTicker() {
+  if (slaTimer) return;
+  slaTimer = setInterval(() => emit("sla:tick"), 30000);
 }
 
 // ============================================================
@@ -114,9 +147,9 @@ const VIEWS = {
 };
 
 function renderNav(user) {
-  $$("#nav-tabs [data-view]").forEach((btn) => {
+  $$("[data-view]").forEach((btn) => {
     const view = VIEWS[btn.dataset.view];
-    btn.classList.toggle("hidden", !view.allowed(user));
+    if (view) btn.classList.toggle("hidden", !view.allowed(user));
   });
 }
 
@@ -129,7 +162,7 @@ function route(viewName, force = false) {
   Object.entries(VIEWS).forEach(([name, v]) => {
     $(v.el).classList.toggle("hidden", name !== view);
   });
-  $$("#nav-tabs [data-view]").forEach((btn) =>
+  $$("[data-view]").forEach((btn) =>
     btn.classList.toggle("active", btn.dataset.view === view)
   );
   VIEWS[view].render();
@@ -189,7 +222,37 @@ function renderAdmin() {
 
 function renderSettingsAdmin(container) {
   const cfg = store.config.app;
+  const sla = getSla();
   container.innerHTML = `
+    <div class="dash-card">
+      <h4>Tiempos de SLA (cuenta regresiva)</h4>
+      <p class="text-muted">Tiempo que tiene cada rol para asignar la fecha y hora antes de marcar la tarjeta como atrasada.</p>
+      <div class="sla-form">
+        <div class="sla-row">
+          <span class="sla-row-label">Cotización → asignar "Costo de envío"</span>
+          <div class="sla-inputs">
+            <label>Horas <input type="number" min="0" class="input input-sm" id="sla-quote-h" value="${sla.quote.hours}"></label>
+            <label>Minutos <input type="number" min="0" max="59" class="input input-sm" id="sla-quote-m" value="${sla.quote.minutes}"></label>
+          </div>
+        </div>
+        <div class="sla-row">
+          <span class="sla-row-label">Producción → asignar "Fecha y Hora en Almacén"</span>
+          <div class="sla-inputs">
+            <label>Horas <input type="number" min="0" class="input input-sm" id="sla-prod-h" value="${sla.production.hours}"></label>
+            <label>Minutos <input type="number" min="0" max="59" class="input input-sm" id="sla-prod-m" value="${sla.production.minutes}"></label>
+          </div>
+        </div>
+        <div class="sla-row">
+          <span class="sla-row-label">Almacén → asignar "Fecha y Hora para Listo"</span>
+          <div class="sla-inputs">
+            <label>Horas <input type="number" min="0" class="input input-sm" id="sla-wh-h" value="${sla.warehouse.hours}"></label>
+            <label>Minutos <input type="number" min="0" max="59" class="input input-sm" id="sla-wh-m" value="${sla.warehouse.minutes}"></label>
+          </div>
+        </div>
+        <button class="btn btn-primary" id="btn-save-sla">Guardar tiempos</button>
+      </div>
+    </div>
+
     <div class="dash-card">
       <h4>Configuración general</h4>
       <p class="text-muted">Estos valores se definen en <code>src/config.js</code> y se reflejan en <code>firebase.rules</code>.</p>
@@ -202,6 +265,22 @@ function renderSettingsAdmin(container) {
       </ul>
       ${cfg.demoMode ? `<button class="btn btn-ghost" id="btn-demo-data">Generar datos demo</button>` : ""}
     </div>`;
+
+  $("#btn-save-sla")?.addEventListener("click", async (e) => {
+    e.target.disabled = true;
+    try {
+      await saveSlaSettings({
+        quote: { hours: $("#sla-quote-h").value, minutes: $("#sla-quote-m").value },
+        production: { hours: $("#sla-prod-h").value, minutes: $("#sla-prod-m").value },
+        warehouse: { hours: $("#sla-wh-h").value, minutes: $("#sla-wh-m").value },
+      });
+      toast("Tiempos de SLA guardados.", "success");
+    } catch (err) {
+      toast("No se pudo guardar: " + err.message, "error");
+    } finally {
+      e.target.disabled = false;
+    }
+  });
 
   $("#btn-demo-data")?.addEventListener("click", async (e) => {
     e.target.disabled = true;
@@ -283,16 +362,20 @@ function bindStaticEvents() {
     $(sel)?.addEventListener("click", () => logout());
   });
 
-  // Navegación
-  $$("#nav-tabs [data-view]").forEach((btn) => {
+  // Navegación (barra superior y barra inferior móvil)
+  $$("[data-view]").forEach((btn) => {
     btn.addEventListener("click", () => route(btn.dataset.view));
   });
+
+  // Modo nocturno
+  $("#btn-theme")?.addEventListener("click", toggleTheme);
 
   // Nuevo ticket
   $("#btn-new-ticket").addEventListener("click", () => openTicketForm());
 
-  // Filtro de estado del tablero
+  // Filtros del tablero (estado y estatus de tarea SLA)
   $("#board-status-filter").addEventListener("change", renderBoard);
+  $("#board-sla-filter").addEventListener("change", renderBoard);
 
   // Notificaciones
   $("#btn-notifications").addEventListener("click", (e) => {
@@ -334,6 +417,11 @@ function bindStaticEvents() {
   on("notifications:changed", () => {
     if (!appStarted) return;
     renderNotificationsPanel(openFromNotification);
+  });
+  on("settings:changed", () => {
+    if (!appStarted) return;
+    // Los SLA cambian las cuentas regresivas del tablero.
+    if (currentView === "board") renderBoard();
   });
 }
 

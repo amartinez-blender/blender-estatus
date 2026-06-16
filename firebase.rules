@@ -26,7 +26,7 @@ service cloud.firestore {
     // Correos con rol SuperAdmin automático. Sincronizar con config.js.
     function isConfiguredSuperAdmin() {
       return request.auth.token.email.lower() in [
-        'admin@blendergroup.com'
+        'amartinez@blendergroup.com'
       ];
     }
 
@@ -111,6 +111,11 @@ service cloud.firestore {
       allow delete: if isSuper();
     }
 
+    // Tickets que requieren cotización de envío.
+    function isQuoteShipping(t) {
+      return t.shippingType in ['Envío por cobrar', 'Envío pre-pagado'];
+    }
+
     // ---------- Helpers de tickets ----------
     function canViewTicketData(t) {
       return isSuper()
@@ -118,7 +123,8 @@ service cloud.firestore {
         || hasRole('auditor')
         || (hasRole('sales_exec') && (t.ownerId == request.auth.uid || t.createdBy == request.auth.uid))
         || (hasRole('production') && t.treatment == 'Fabricación')
-        || (hasRole('warehouse') && t.treatment == 'Almacén');
+        // Almacén ve sus tickets y todos los que requieren envío (para cotizar).
+        || (hasRole('warehouse') && (t.treatment == 'Almacén' || isQuoteShipping(t)));
     }
 
     // Puede comentar/adjuntar/operar (excluye auditor).
@@ -138,7 +144,7 @@ service cloud.firestore {
       return d.orderNumber is string && d.orderNumber.matches('^[0-9]{1,5}$')
         && d.treatment in ['Fabricación', 'Almacén']
         && d.shippingType in ['Recolección', 'Envío por cobrar', 'Envío pre-pagado']
-        && d.deliveryMode in ['Domicilio', 'Ocurre']
+        && d.deliveryMode in ['Domicilio', 'Ocurre', 'Recolección']
         && d.status in ['Activo', 'Cerrado', 'Cancelado']
         && d.columnId is string && d.columnId.size() > 0
         && d.ownerId is string && d.ownerId.size() > 0
@@ -165,6 +171,37 @@ service cloud.firestore {
         return changedKeys().hasOnly(['commentsCount', 'attachmentsCount', 'updatedAt']);
       }
 
+      // Producción asigna "Fecha y Hora en Almacén".
+      function onlyProductionPromise() {
+        return changedKeys().hasOnly(['promiseDateWarehouse', 'updatedAt']);
+      }
+
+      // Almacén asigna "Fecha y Hora para Listo".
+      function onlyWarehousePromise() {
+        return changedKeys().hasOnly(['promiseDateReady', 'updatedAt']);
+      }
+
+      // Almacén cotiza el envío (y la tarjeta se mueve sola a la columna lista).
+      function onlyShippingCost() {
+        return changedKeys().hasOnly(['shippingCost', 'costDecision', 'columnId', 'lastMovedAt', 'updatedAt'])
+          || changedKeys().hasOnly(['shippingCost', 'costDecision', 'updatedAt']);
+      }
+
+      // Vendedor creador acepta (por cobrar) / rechaza el costo.
+      function onlyCostDecisionMove() {
+        return changedKeys().hasOnly(['costDecision', 'columnId', 'lastMovedAt', 'updatedAt']);
+      }
+      function onlyAcceptFlag() {
+        return changedKeys().hasOnly(['costDecision', 'updatedAt']);
+      }
+      function onlyRejectMove() {
+        return changedKeys().hasOnly(['shippingCost', 'costDecision', 'shippingPaidByClient', 'columnId', 'lastMovedAt', 'updatedAt']);
+      }
+      // Confirmar "Envío Pagado por el cliente" y mover por tratamiento.
+      function onlyPaidMove() {
+        return changedKeys().hasOnly(['shippingPaidByClient', 'columnId', 'lastMovedAt', 'updatedAt']);
+      }
+
       allow read: if canViewTicketData(resource.data);
 
       allow create: if (isSuper() || hasRole('sales_admin') || hasRole('sales_exec'))
@@ -183,9 +220,24 @@ service cloud.firestore {
             && (resource.data.ownerId == request.auth.uid || resource.data.createdBy == request.auth.uid)
             && request.resource.data.columnId == resource.data.columnId
           )
-          // Producción/Almacén: solo mover dentro de su tratamiento.
-          || (hasRole('production') && resource.data.treatment == 'Fabricación' && onlyMoveFields())
-          || (hasRole('warehouse') && resource.data.treatment == 'Almacén' && onlyMoveFields())
+          // Ejecutivo creador: aceptar/rechazar el costo (incluye mover de columna).
+          || (
+            hasRole('sales_exec') && resource.data.createdBy == request.auth.uid
+            && (onlyCostDecisionMove() || onlyAcceptFlag() || onlyRejectMove())
+          )
+          // Ejecutivo dueño: confirmar "Envío Pagado por el cliente" (mueve por tratamiento).
+          || (
+            hasRole('sales_exec') && resource.data.ownerId == request.auth.uid
+            && onlyPaidMove()
+          )
+          // Producción: mover sus tickets o asignar "Fecha y Hora en Almacén".
+          || (hasRole('production') && resource.data.treatment == 'Fabricación'
+              && (onlyMoveFields() || onlyProductionPromise()))
+          // Almacén: mover sus tickets o asignar "Fecha y Hora para Listo".
+          || (hasRole('warehouse') && resource.data.treatment == 'Almacén'
+              && (onlyMoveFields() || onlyWarehousePromise()))
+          // Almacén: cotizar el envío en tickets que lo requieren.
+          || (hasRole('warehouse') && isQuoteShipping(resource.data) && onlyShippingCost())
           // Contadores: cualquier usuario que puede operar el ticket.
           || (canOperateTicketData(resource.data) && onlyCounterFields())
         );
@@ -268,6 +320,18 @@ service cloud.firestore {
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']);
 
       allow delete: if isStaff() && resource.data.recipientId == request.auth.uid;
+    }
+
+    // ---------- /slaBreaches (analítica histórica de atrasos) ----------
+    match /slaBreaches/{breachId} {
+      // Lectura solo para vistas globales (Dashboard).
+      allow read: if isSuper() || hasRole('sales_admin') || hasRole('auditor');
+      // Cualquier usuario operativo registra atrasos; inmutables.
+      allow create: if isStaff()
+        && role() != 'auditor'
+        && request.resource.data.actorId == request.auth.uid
+        && request.resource.data.lateMs is number;
+      allow update, delete: if false;
     }
 
     // ---------- /settings ----------

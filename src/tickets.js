@@ -9,15 +9,19 @@
 //   warehouse  → treatment == "Almacén"
 
 import {
-  fb, collection, doc, getDoc, setDoc, updateDoc, deleteDoc, query, where,
+  fb, collection, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc, query, where,
   onSnapshot, serverTimestamp, writeBatch,
 } from "./firebase.js";
-import { store, emit, validateTicketData, toDate } from "./utils.js";
+import { store, emit, validateTicketData, toDate, fmtDateTime, fmtMoney, normalize, durationToMs,
+  ROUTING_COLUMN_NAMES, QUOTE_SHIPPING_TYPES } from "./utils.js";
 import { ROLES, ROLE_TREATMENT } from "./roles.js";
 import { logActivity } from "./activity.js";
 import { notifyUsers, notifyRole } from "./notifications.js";
-import { columnName } from "./columns.js";
+import { columnName, findColumnByName } from "./columns.js";
 import { userName } from "./users.js";
+import { sendGoogleChat } from "./chat.js";
+import { getSla } from "./settings.js";
+import { addBusinessMs, businessMsBetween } from "./businesstime.js";
 
 // ===================== Listeners por rol =====================
 
@@ -42,8 +46,15 @@ export function listenTickets() {
       ];
       break;
     case ROLES.PRODUCTION:
-    case ROLES.WAREHOUSE:
       queries = [query(col, where("treatment", "==", ROLE_TREATMENT[user.role]))];
+      break;
+    case ROLES.WAREHOUSE:
+      // Almacén ve sus tickets (tratamiento Almacén) y además todos los que
+      // requieren envío, para poder cotizarlos (Cotización de envío).
+      queries = [
+        query(col, where("treatment", "==", ROLE_TREATMENT[ROLES.WAREHOUSE])),
+        query(col, where("shippingType", "in", QUOTE_SHIPPING_TYPES)),
+      ];
       break;
     default:
       store.tickets = [];
@@ -122,6 +133,11 @@ export async function createTicket(data) {
     ownerId: data.ownerId || user.uid,
     priority: data.priority || null,
     status: "Activo",
+    promiseDateWarehouse: null, // "Fecha y Hora en Almacén" (lo asigna Producción)
+    promiseDateReady: null,     // "Fecha y Hora para Listo" (lo asigna Almacén)
+    shippingCost: null,         // Costo de envío en MXN (se llena en Cotización)
+    costDecision: null,         // null | "accepted" | "rejected" (decide el creador)
+    shippingPaidByClient: false,// pre-pagado: el cliente ya pagó el envío
     commentsCount: 0,
     attachmentsCount: 0,
     createdAt: serverTimestamp(),
@@ -140,6 +156,9 @@ export async function createTicket(data) {
   }
 
   await logActivity(ticketRef.id, "created", `${user.displayName} creó el ticket.`);
+  // Notifica por rol según la columna a la que cayó el ticket (routing).
+  await notifyColumnEntry({ id: ticketRef.id, orderNumber: String(data.orderNumber), ownerId: data.ownerId || user.uid },
+    columnName(data.columnId));
   return ticketRef.id;
 }
 
@@ -216,21 +235,17 @@ export async function moveTicket(ticket, toColumnId) {
     message: `Movido de ${fromName} a ${toName} por ${user.displayName}.`,
   });
 
-  // Avisos a equipos cuando el ticket entra a su columna.
-  if (toName === "Fabricación") {
-    await notifyRole(ROLES.PRODUCTION, {
-      ticketId: ticket.id, type: "production_in",
-      title: "Nuevo ticket en Fabricación",
-      message: `Pedido ${ticket.orderNumber} entró a Fabricación.`,
-    });
+  // Registra atraso al salir de una columna con fecha promesa vencida (req. 4).
+  if (normalize(fromName) === normalize("Fabricación") && ticket.promiseDateWarehouse) {
+    recordBreach(ticket, "Cambiar a Almacén",
+      businessMsBetween(new Date(ticket.promiseDateWarehouse), new Date()));
+  } else if (normalize(fromName) === normalize("Almacén") && ticket.promiseDateReady) {
+    recordBreach(ticket, "Cambiar a Listos",
+      businessMsBetween(new Date(ticket.promiseDateReady), new Date()));
   }
-  if (toName === "Almacén") {
-    await notifyRole(ROLES.WAREHOUSE, {
-      ticketId: ticket.id, type: "warehouse_in",
-      title: "Nuevo ticket en Almacén",
-      message: `Pedido ${ticket.orderNumber} entró a Almacén.`,
-    });
-  }
+
+  // Aviso por rol al entrar a la columna correspondiente (reqs. 1, 3, 7, 8).
+  await notifyColumnEntry(ticket, toName);
 }
 
 export async function setTicketStatus(ticket, status) {
@@ -246,6 +261,241 @@ export async function setTicketStatus(ticket, status) {
     title: `Pedido ${ticket.orderNumber}`,
     message: `El ticket fue marcado como ${status} por ${user.displayName}.`,
   });
+}
+
+// "Fecha y Hora en Almacén" — la asigna Producción (req. 1). ISO local string.
+export async function setProductionPromise(ticket, isoDateTime) {
+  const user = store.currentUser;
+  // Atraso (en tiempo hábil) si se asignó fuera del SLA de Producción.
+  const entered = toDate(ticket.lastMovedAt)?.getTime() ?? Date.now();
+  const deadline = addBusinessMs(entered, durationToMs(getSla().production)).getTime();
+  recordBreach(ticket, "Asignar fecha (Producción)", businessMsBetween(deadline, Date.now()));
+  await updateDoc(doc(fb.db, "tickets", ticket.id), {
+    promiseDateWarehouse: isoDateTime || null,
+    updatedAt: serverTimestamp(),
+  });
+  await logActivity(ticket.id, "updated",
+    `${user.displayName} asignó Fecha y Hora en Almacén: ${fmtDateTime(isoDateTime)}.`);
+  await notifyUsers([ticket.ownerId], {
+    ticketId: ticket.id, type: "updated",
+    title: `Pedido ${ticket.orderNumber}`,
+    message: `Producción asignó la Fecha y Hora en Almacén: ${fmtDateTime(isoDateTime)}.`,
+  });
+}
+
+// "Fecha y Hora para Listo" — la asigna Almacén (req. 2). ISO local string.
+export async function setWarehousePromise(ticket, isoDateTime) {
+  const user = store.currentUser;
+  const entered = toDate(ticket.lastMovedAt)?.getTime() ?? Date.now();
+  const deadline = addBusinessMs(entered, durationToMs(getSla().warehouse)).getTime();
+  recordBreach(ticket, "Asignar fecha (Almacén)", businessMsBetween(deadline, Date.now()));
+  await updateDoc(doc(fb.db, "tickets", ticket.id), {
+    promiseDateReady: isoDateTime || null,
+    updatedAt: serverTimestamp(),
+  });
+  await logActivity(ticket.id, "updated",
+    `${user.displayName} asignó Fecha y Hora para Listo: ${fmtDateTime(isoDateTime)}.`);
+  await notifyUsers([ticket.ownerId], {
+    ticketId: ticket.id, type: "updated",
+    title: `Pedido ${ticket.orderNumber}`,
+    message: `Almacén asignó la Fecha y Hora para Listo: ${fmtDateTime(isoDateTime)}.`,
+  });
+}
+
+// Costo de envío (req. 2). Al llenarlo, mueve la tarjeta a "Cotización de envío
+// lista" (req. 6), registra historial, notifica in-app y avisa por Google Chat.
+export async function setShippingCost(ticket, cost) {
+  const user = store.currentUser;
+  const amount = Number(cost);
+  if (!isFinite(amount) || amount < 0) throw new Error("Costo de envío inválido.");
+
+  // Atraso (en tiempo hábil) si se cotizó fuera del SLA de Cotización.
+  const entered = toDate(ticket.lastMovedAt)?.getTime() ?? toDate(ticket.createdAt)?.getTime() ?? Date.now();
+  const quoteDeadline = addBusinessMs(entered, durationToMs(getSla().quote)).getTime();
+  recordBreach(ticket, "Cotización de envío", businessMsBetween(quoteDeadline, Date.now()));
+
+  const updates = {
+    shippingCost: amount,
+    costDecision: null, // nueva cotización: reinicia la decisión del vendedor
+    updatedAt: serverTimestamp(),
+  };
+
+  // Auto-mover a "Cotización de envío lista" si la columna existe.
+  const target = findColumnByName(ROUTING_COLUMN_NAMES.COTIZACION_LISTA);
+  const willMove = target && target.id !== ticket.columnId;
+  if (willMove) {
+    updates.columnId = target.id;
+    updates.lastMovedAt = serverTimestamp();
+  }
+
+  await updateDoc(doc(fb.db, "tickets", ticket.id), updates);
+
+  await logActivity(ticket.id, "updated",
+    `${user.displayName} asignó el Costo de envío: ${fmtMoney(amount)}.`);
+  if (willMove) {
+    await logActivity(ticket.id, "moved",
+      `${user.displayName} movió el ticket a ${target.name} (cotización lista).`,
+      { to: target.id });
+  }
+
+  const owner = store.users.find((u) => (u.uid || u.id) === ticket.ownerId);
+  const ownerName = owner?.displayName || userName(ticket.ownerId);
+  await notifyUsers([ticket.ownerId], {
+    ticketId: ticket.id, type: "updated",
+    title: `Pedido ${ticket.orderNumber}`,
+    message: `Cotización lista: ${fmtMoney(amount)}. ${willMove ? "Pasó a Cotización de envío lista." : ""}`,
+  });
+
+  // Aviso por Google Chat (webhook a un espacio; best-effort).
+  // Mención al vendedor: si tenemos su ID de Google Chat usamos un ping real;
+  // si no, lo nombramos con "@" + correo (texto), que es lo posible vía webhook.
+  const mention = owner?.chatUserId
+    ? `<users/${owner.chatUserId}>`
+    : `@${ownerName}${owner?.email ? " (" + owner.email + ")" : ""}`;
+  await sendGoogleChat(
+    `📦 *Pedido ${ticket.orderNumber}* — cotización de envío lista.\n` +
+    `Costo: *${fmtMoney(amount)}*. Responsable: ${mention}`
+  );
+}
+
+// Construye las menciones de Google Chat de todos los usuarios activos de un rol.
+function roleMentions(role) {
+  return store.users
+    .filter((u) => u.role === role && u.active !== false)
+    .map((u) => (u.chatUserId ? `<users/${u.chatUserId}>` : `@${u.displayName}`))
+    .join(" ");
+}
+
+// Notifica por rol cuando un ticket entra a una columna (reqs. 1, 3, 7, 8).
+// Avisa en la campana (in-app) Y por Google Chat al espacio configurado.
+async function notifyColumnEntry(ticket, colNameStr) {
+  const c = normalize(colNameStr);
+  let role = null, icon = "🔔", type = "moved";
+  if (c === normalize("Fabricación")) { role = ROLES.PRODUCTION; icon = "🏭"; type = "production_in"; }
+  else if (c === normalize("Almacén") || c === normalize("Cotización de envío")) { role = ROLES.WAREHOUSE; icon = "📦"; type = "warehouse_in"; }
+  else if (c === normalize("Listos para recolección")) { role = ROLES.SALES_EXEC; icon = "✅"; type = "moved"; }
+  if (!role) return;
+
+  await notifyRole(role, {
+    ticketId: ticket.id, type,
+    title: `Pedido ${ticket.orderNumber}`,
+    message: `Entró a ${colNameStr}.`,
+  });
+
+  await sendGoogleChat(
+    `${icon} *Pedido ${ticket.orderNumber}* entró a *${colNameStr}*. ${roleMentions(role)}`.trim()
+  );
+}
+
+// Registra una incidencia de atraso en /slaBreaches para la analítica histórica
+// del Dashboard (req. 4). No bloquea la operación principal.
+function recordBreach(ticket, phase, lateMs) {
+  if (!(lateMs > 0)) return;
+  try {
+    addDoc(collection(fb.db, "slaBreaches"), {
+      ticketId: ticket.id,
+      orderNumber: ticket.orderNumber,
+      phase,
+      lateMs: Math.round(lateMs),
+      ownerId: ticket.ownerId || null,
+      actorId: store.currentUser?.uid || null,
+      createdAt: serverTimestamp(),
+    });
+  } catch (err) {
+    console.warn("[sla] No se pudo registrar atraso:", err);
+  }
+}
+
+const isPrepaid = (t) => normalize(t.shippingType) === normalize("Envío pre-pagado");
+
+// El vendedor creador ACEPTA el costo (req.). Si es "Envío por cobrar" la tarjeta
+// pasa directo a la columna de su Tratamiento. Si es "Envío pre-pagado" solo queda
+// marcada como aceptada; el movimiento ocurre al confirmar el pago del cliente.
+export async function acceptShippingCost(ticket) {
+  const user = store.currentUser;
+  if (isPrepaid(ticket)) {
+    await updateDoc(doc(fb.db, "tickets", ticket.id), {
+      costDecision: "accepted",
+      updatedAt: serverTimestamp(),
+    });
+    await logActivity(ticket.id, "updated",
+      `${user.displayName} aceptó el costo de envío. Falta confirmar "Envío Pagado por el cliente".`);
+    await notifyUsers([ticket.ownerId], {
+      ticketId: ticket.id, type: "updated",
+      title: `Pedido ${ticket.orderNumber}`,
+      message: "Costo aceptado. Marca 'Envío Pagado por el cliente' para continuar.",
+    });
+    return;
+  }
+  // Envío por cobrar → mueve a la columna del Tratamiento.
+  await moveAfterCostDecision(ticket, "accepted");
+}
+
+// Pre-pagado: el vendedor asignado o el Admin de Ventas confirma el pago y la
+// tarjeta pasa a la columna de su Tratamiento.
+export async function markShippingPaid(ticket) {
+  const user = store.currentUser;
+  const target = findColumnByName(ticket.treatment); // "Fabricación" o "Almacén"
+  const updates = { shippingPaidByClient: true, updatedAt: serverTimestamp() };
+  if (target) { updates.columnId = target.id; updates.lastMovedAt = serverTimestamp(); }
+  await updateDoc(doc(fb.db, "tickets", ticket.id), updates);
+  await logActivity(ticket.id, "updated",
+    `${user.displayName} marcó "Envío Pagado por el cliente".${target ? ` Pasó a ${target.name}.` : ""}`);
+  if (target) {
+    await notifyUsers([ticket.ownerId], {
+      ticketId: ticket.id, type: "moved",
+      title: `Pedido ${ticket.orderNumber}`, message: `Pasó a ${target.name}.`,
+    });
+    await notifyColumnEntry(ticket, target.name);
+  }
+}
+
+// Movimiento común al aceptar (por cobrar) o al confirmar pago.
+async function moveAfterCostDecision(ticket, decision) {
+  const user = store.currentUser;
+  const target = findColumnByName(ticket.treatment);
+  const updates = { costDecision: decision, updatedAt: serverTimestamp() };
+  if (target) { updates.columnId = target.id; updates.lastMovedAt = serverTimestamp(); }
+  await updateDoc(doc(fb.db, "tickets", ticket.id), updates);
+  await logActivity(ticket.id, "updated",
+    `${user.displayName} aceptó el costo de envío.${target ? ` Pasó a ${target.name}.` : ""}`);
+  if (target) {
+    await notifyUsers([ticket.ownerId], {
+      ticketId: ticket.id, type: "moved",
+      title: `Pedido ${ticket.orderNumber}`, message: `Pasó a ${target.name}.`,
+    });
+    await notifyColumnEntry(ticket, target.name);
+  }
+}
+
+// El vendedor creador RECHAZA el costo: la tarjeta vuelve a "Cotización de envío",
+// se limpia el costo y el timer de cotización se reinicia (reglas originales).
+export async function rejectShippingCost(ticket) {
+  const user = store.currentUser;
+  const target = findColumnByName(ROUTING_COLUMN_NAMES.COTIZACION);
+  const updates = {
+    shippingCost: null,
+    costDecision: "rejected",
+    shippingPaidByClient: false,
+    updatedAt: serverTimestamp(),
+  };
+  if (target) { updates.columnId = target.id; updates.lastMovedAt = serverTimestamp(); }
+  await updateDoc(doc(fb.db, "tickets", ticket.id), updates);
+  await logActivity(ticket.id, "updated",
+    `${user.displayName} rechazó el costo de envío. Regresó a Cotización de envío para recotizar.`);
+  await notifyUsers([ticket.ownerId], {
+    ticketId: ticket.id, type: "updated",
+    title: `Pedido ${ticket.orderNumber}`,
+    message: "El costo de envío fue rechazado. Se requiere recotizar.",
+  });
+  await notifyRole(ROLES.WAREHOUSE, {
+    ticketId: ticket.id, type: "updated",
+    title: "Recotizar envío",
+    message: `El pedido ${ticket.orderNumber} requiere un nuevo costo de envío.`,
+  });
+  await sendGoogleChat(
+    `🔁 *Pedido ${ticket.orderNumber}* — costo rechazado, requiere recotizar. ${roleMentions(ROLES.WAREHOUSE)}`.trim()
+  );
 }
 
 // Solo SuperAdmin (reforzado en rules). Libera el número de pedido.

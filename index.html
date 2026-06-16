@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <meta name="theme-color" content="#1D1D1B">
   <title>Blender Estatus</title>
+  <link rel="icon" type="image/png" href="https://media.licdn.com/dms/image/v2/D4E0BAQE5UZZakCyBIA/company-logo_200_200/company-logo_200_200/0/1737056927927/blender_group_logo?e=2147483647&v=beta&t=_OBkDyAUapmhNxn65gjFnblp4OZvXz8ve060y6UR7lQ">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -72,15 +73,24 @@
   <!-- ============ App ============ -->
   <div id="app" class="hidden">
     <header class="app-header">
-      <div class="brand"><span class="brand-dot"></span>Blender <strong>Estatus</strong></div>
+      <div class="brand">
+        <img class="brand-logo logo-light"
+          src="https://blendergroup.com/storage/product/media/1085/gallery_1781642574_nRiAR.webp"
+          alt="Blender Group" referrerpolicy="no-referrer">
+        <img class="brand-logo logo-dark"
+          src="https://blendergroup.com/storage/product/media/1086/gallery_1781643272_oKO4Y.webp"
+          alt="Blender Group" referrerpolicy="no-referrer">
+        <strong>Estatus</strong>
+      </div>
 
-      <nav id="nav-tabs" class="nav-tabs" aria-label="Secciones">
-        <button class="tab active" data-view="board">Tablero</button>
-        <button class="tab" data-view="dashboard">Dashboard</button>
-        <button class="tab" data-view="admin">Admin</button>
+      <nav id="nav-tabs" class="nav-tabs" aria-label="Secciones principales">
+        <button class="tab active" data-view="board"><span class="tab-icon" aria-hidden="true">🗂️</span><span class="tab-text">Tablero</span></button>
+        <button class="tab" data-view="dashboard"><span class="tab-icon" aria-hidden="true">📊</span><span class="tab-text">Dashboard</span></button>
+        <button class="tab" data-view="admin"><span class="tab-icon" aria-hidden="true">⚙️</span><span class="tab-text">Admin</span></button>
       </nav>
 
       <div class="header-actions">
+        <button class="theme-toggle" id="btn-theme" aria-label="Cambiar modo nocturno" title="Modo nocturno">🌙</button>
         <div id="notif-wrap" class="header-drop">
           <button class="btn btn-icon" id="btn-notifications" aria-label="Notificaciones">
             🔔<span id="notif-badge" class="notif-badge hidden">0</span>
@@ -116,11 +126,17 @@
         <div class="view-toolbar">
           <h1>Tablero</h1>
           <div class="toolbar-actions">
+            <div id="board-vendor-filter" class="vfilter-host"></div>
             <select class="input input-sm" id="board-status-filter" aria-label="Filtrar por estado">
               <option value="Activo" selected>Activos</option>
               <option value="Cerrado">Cerrados</option>
               <option value="Cancelado">Cancelados</option>
               <option value="Todos">Todos</option>
+            </select>
+            <select class="input input-sm" id="board-sla-filter" aria-label="Filtrar por estatus de tarea">
+              <option value="">Todas las tareas</option>
+              <option value="ontime">Tarea en Tiempo</option>
+              <option value="late">Tarea Atrasada</option>
             </select>
             <button class="btn btn-primary" id="btn-new-ticket">+ Nuevo ticket</button>
           </div>
@@ -141,6 +157,13 @@
         <div id="admin-content"></div>
       </section>
     </main>
+
+    <!-- Navegación inferior (visible en móvil) -->
+    <nav id="nav-bottom" class="nav-bottom" aria-label="Secciones">
+      <button class="bottom-tab active" data-view="board"><span aria-hidden="true">🗂️</span><span>Tablero</span></button>
+      <button class="bottom-tab" data-view="dashboard"><span aria-hidden="true">📊</span><span>Dashboard</span></button>
+      <button class="bottom-tab" data-view="admin"><span aria-hidden="true">⚙️</span><span>Admin</span></button>
+    </nav>
   </div>
 
   <!-- ============ Modales ============ -->

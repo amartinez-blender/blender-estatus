@@ -50,6 +50,13 @@ export async function setUserActive(uid, active) {
   await updateDoc(doc(fb.db, "users", uid), { active: !!active });
 }
 
+// ID de Google Chat del usuario (para @menciones reales en el webhook).
+export async function setUserChatId(uid, chatUserId) {
+  await updateDoc(doc(fb.db, "users", uid), {
+    chatUserId: String(chatUserId || "").trim(),
+  });
+}
+
 export async function updateMyProfile({ phone }) {
   const uid = store.currentUser?.uid;
   if (!uid) return;
@@ -81,6 +88,12 @@ export function renderUsersAdmin(container) {
               <strong>${escapeHtml(u.displayName)}</strong>
               <span class="text-muted">${escapeHtml(u.email)}</span>
               <span class="text-muted">${escapeHtml(u.phone || "Sin teléfono")}</span>
+              ${canEditRole ? `
+                <label class="chatid-field">
+                  <span class="text-muted">ID de Google Chat</span>
+                  <input class="input input-sm input-chatid" placeholder="p. ej. 1234567890"
+                    value="${escapeHtml(u.chatUserId || "")}" aria-label="ID de Chat de ${escapeHtml(u.displayName)}">
+                </label>` : ""}
             </div>
           </div>
           <div class="admin-user-actions">
@@ -112,6 +125,21 @@ export function renderUsersAdmin(container) {
           toast(`Rol de ${user?.displayName || "usuario"} actualizado.`, "success");
         } catch (err) {
           toast("No se pudo cambiar el rol: " + err.message, "error");
+        }
+      });
+    });
+
+    // Guardar ID de Chat al salir del campo (si cambió).
+    container.querySelectorAll(".input-chatid").forEach((inp) => {
+      inp.addEventListener("change", async (e) => {
+        const card = e.target.closest("[data-uid]");
+        const user = getUser(card.dataset.uid);
+        if ((user?.chatUserId || "") === e.target.value.trim()) return;
+        try {
+          await setUserChatId(card.dataset.uid, e.target.value);
+          toast(`ID de Chat de ${user?.displayName || "usuario"} guardado.`, "success");
+        } catch (err) {
+          toast("No se pudo guardar el ID: " + err.message, "error");
         }
       });
     });

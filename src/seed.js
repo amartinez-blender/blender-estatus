@@ -4,7 +4,8 @@
 import {
   fb, collection, doc, getDoc, getDocs, setDoc, addDoc, serverTimestamp, writeBatch,
 } from "./firebase.js";
-import { store, DEFAULT_COLUMNS, TREATMENTS, SHIPPING_TYPES, DELIVERY_MODES, PRIORITIES } from "./utils.js";
+import { store, normalize, DEFAULT_COLUMNS, ROUTING_COLUMN_NAMES,
+  TREATMENTS, SHIPPING_TYPES, DELIVERY_MODES, PRIORITIES } from "./utils.js";
 import { ROLES } from "./roles.js";
 
 // Crea columnas por defecto y settings si no existen. Idempotente.
@@ -28,6 +29,28 @@ export async function ensureSeed() {
       });
       await batch.commit();
       console.info("[seed] Columnas por defecto creadas.");
+    } else {
+      // Instalaciones existentes: asegura la columna "Cotización de envío lista".
+      const exists = colsSnap.docs.some(
+        (d) => normalize(d.data().name) === normalize(ROUTING_COLUMN_NAMES.COTIZACION_LISTA)
+      );
+      if (!exists) {
+        // La colocamos justo después de "Cotización de envío" (orden fraccionario,
+        // así no hay que reordenar las demás). Si no existe, va al final.
+        const cotiz = colsSnap.docs.find(
+          (d) => normalize(d.data().name) === normalize(ROUTING_COLUMN_NAMES.COTIZACION)
+        );
+        const maxOrder = Math.max(0, ...colsSnap.docs.map((d) => d.data().order ?? 0));
+        const order = cotiz ? (cotiz.data().order ?? 0) + 0.5 : maxOrder + 1;
+        await addDoc(collection(fb.db, "columns"), {
+          name: ROUTING_COLUMN_NAMES.COTIZACION_LISTA,
+          order,
+          active: true,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+        console.info("[seed] Columna 'Cotización de envío lista' creada.");
+      }
     }
 
     // Configuración inicial

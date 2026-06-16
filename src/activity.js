@@ -49,3 +49,10 @@ export async function fetchRecentActivity(max = 25) {
     ...d.data(),
   }));
 }
+
+// Incidencias de atraso para la analítica histórica del Dashboard (req. 4).
+export async function fetchSlaBreaches(max = 2000) {
+  const q = query(collection(fb.db, "slaBreaches"), orderBy("createdAt", "desc"), limit(max));
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+}

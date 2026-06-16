@@ -35,4 +35,10 @@ export const APP_CONFIG = {
 
   // Días sin movimiento para marcar un ticket como "estancado" en el dashboard.
   staleDays: 5,
+
+  // URL del webhook entrante de un espacio de Google Chat para avisar cuando
+  // una cotización de envío queda lista. Déjalo vacío para desactivarlo.
+  // Cómo obtenerlo: en Google Chat → espacio → Apps e integraciones →
+  // Webhooks → Agregar webhook → copia la URL.
+  googleChatWebhookUrl: "",
 };

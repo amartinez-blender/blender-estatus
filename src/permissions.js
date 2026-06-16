@@ -6,9 +6,17 @@
 // Estas mismas reglas están reflejadas en firebase.rules.
 
 import { ROLES, ROLE_TREATMENT } from "./roles.js";
+import { normalize } from "./utils.js";
 
 function ownsTicket(user, ticket) {
   return !!ticket && (ticket.ownerId === user.uid || ticket.createdBy === user.uid);
+}
+
+// Columna del recurso (si el llamador la adjuntó como _columnName).
+function colMatches(resource, ...names) {
+  const c = resource?._columnName;
+  if (!c) return true; // sin contexto de columna no se restringe
+  return names.map(normalize).includes(normalize(c));
 }
 
 function treatmentMatches(user, ticket) {
@@ -38,11 +46,49 @@ export function can(user, action, resource = null) {
 
     case "ticket:move":
       if (r === ROLES.SALES_ADMIN) return true;
-      if (r === ROLES.PRODUCTION || r === ROLES.WAREHOUSE) return treatmentMatches(user, resource);
+      // Producción mueve solo desde la columna Fabricación (req. 6).
+      if (r === ROLES.PRODUCTION)
+        return treatmentMatches(user, resource) && colMatches(resource, "Fabricación");
+      // Almacén mueve solo desde Cotización de envío o Almacén (req. 5).
+      if (r === ROLES.WAREHOUSE)
+        return treatmentMatches(user, resource) && colMatches(resource, "Almacén", "Cotización de envío");
       return false;
 
     case "ticket:assignOwner": // cambiar vendedor responsable
       return r === ROLES.SALES_ADMIN;
+
+    // Cancelar/cerrar ticket: NUNCA Producción, Almacén ni Auditor (req. 9 y 10).
+    // Solo quien puede editar el ticket (SuperAdmin, Admin de Ventas, dueño Ejecutivo).
+    case "ticket:cancel":
+    case "ticket:close":
+      if (r === ROLES.SALES_ADMIN) return true;
+      if (r === ROLES.SALES_EXEC) return ownsTicket(user, resource);
+      return false;
+
+    // Fecha y Hora en Almacén → solo Producción (en tickets de Fabricación).
+    case "ticket:setProductionPromise":
+      return r === ROLES.PRODUCTION && treatmentMatches(user, resource);
+
+    // Fecha y Hora para Listo → solo Almacén (en tickets de Almacén).
+    case "ticket:setWarehousePromise":
+      return r === ROLES.WAREHOUSE && treatmentMatches(user, resource);
+
+    // Costo de envío → solo Almacén. Al guardarlo la tarjeta se mueve sola a
+    // "Cotización de envío lista" (las reglas permiten ese movimiento a Almacén
+    // para tickets que requieren envío).
+    case "ticket:setShippingCost":
+      return r === ROLES.WAREHOUSE;
+
+    // Aceptar/Rechazar el costo → solo el vendedor que CREÓ el ticket.
+    case "ticket:decideCost":
+      return (r === ROLES.SALES_EXEC || r === ROLES.SALES_ADMIN) &&
+        resource?.createdBy === user.uid;
+
+    // Confirmar "Envío Pagado por el cliente" → el vendedor asignado o el Admin de Ventas.
+    case "ticket:markPaid":
+      if (r === ROLES.SALES_ADMIN) return true;
+      if (r === ROLES.SALES_EXEC) return resource?.ownerId === user.uid;
+      return false;
 
     case "ticket:delete":
       return false; // solo SuperAdmin (cubierto arriba)

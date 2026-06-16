@@ -1,16 +1,24 @@
 // board.js — Vista Kanban: columnas, tarjetas, drag & drop,
 // modal de creación y panel de detalle del ticket.
 
-import { store, $, $$, escapeHtml, relativeTime, fmtDateTime, fmtFileSize,
+import { store, $, $$, on, escapeHtml, relativeTime, fmtDateTime, fmtFileSize, fmtCountdown, fmtMoney, normalize,
   TREATMENTS, SHIPPING_TYPES, DELIVERY_MODES, PRIORITIES, MAX_ADDRESS_LENGTH } from "./utils.js";
 import { can, visibleTickets } from "./permissions.js";
-import { activeColumns, getColumn, columnName } from "./columns.js";
-import { getTicket, createTicket, updateTicket, moveTicket, setTicketStatus, deleteTicket } from "./tickets.js";
+import { activeColumns, getColumn, columnName, routeColumnId } from "./columns.js";
+import { renderVendorFilter, vendorFilterMatch } from "./filters.js";
+import { computeSla, isFabricacionColumn, isAlmacenColumn, isCotizacionColumn, isCotizacionListaColumn } from "./sla.js";
+import { getTicket, createTicket, updateTicket, moveTicket, setTicketStatus, deleteTicket,
+  setProductionPromise, setWarehousePromise, setShippingCost,
+  acceptShippingCost, markShippingPaid, rejectShippingCost } from "./tickets.js";
 import { getUser, userName, sellableUsers } from "./users.js";
 import { listenComments, addComment, editComment, softDeleteComment, mentionSuggestions, highlightMentions } from "./comments.js";
 import { listenAttachments, uploadAttachment, deleteAttachment, isImage } from "./attachments.js";
 import { listenTicketActivity } from "./activity.js";
 import { toast, confirmDialog, openModal, closeModal, avatarHtml, priorityBadge, statusBadge, emptyState, setSaving } from "./ui.js";
+
+// Adjunta el nombre de la columna al ticket para los checks de permiso
+// sensibles a la columna (mover, según rol — reqs. 5 y 6).
+const withCol = (t) => ({ ...t, _columnName: columnName(t.columnId) });
 
 // ============================================================
 // Tablero
@@ -18,10 +26,19 @@ import { toast, confirmDialog, openModal, closeModal, avatarHtml, priorityBadge,
 
 export function renderBoard() {
   const user = store.currentUser;
+  $("#btn-new-ticket").classList.toggle("hidden", !can(user, "ticket:create"));
+
+  // Filtro de vendedor (se renderiza una vez en su host estático del toolbar).
+  renderVendorFilter($("#board-vendor-filter"), renderBoardColumns);
+
+  renderBoardColumns();
+}
+
+// Renderiza solo las columnas/tarjetas (sin reconstruir el toolbar/filtro).
+function renderBoardColumns() {
+  const user = store.currentUser;
   const container = $("#board");
   const cols = activeColumns();
-
-  $("#btn-new-ticket").classList.toggle("hidden", !can(user, "ticket:create"));
 
   if (!cols.length) {
     container.innerHTML = emptyState("Aún no hay columnas configuradas. El SuperAdmin puede crearlas en el panel Admin.", "🗂️");
@@ -29,9 +46,16 @@ export function renderBoard() {
   }
 
   const filter = $("#board-status-filter").value || "Activo";
-  const tickets = visibleTickets(user, store.tickets).filter(
-    (t) => (filter === "Todos" ? true : t.status === filter)
-  );
+  const slaFilter = $("#board-sla-filter")?.value || ""; // "", "ontime", "late"
+  const tickets = visibleTickets(user, store.tickets)
+    .filter((t) => (filter === "Todos" ? true : t.status === filter))
+    .filter(vendorFilterMatch)
+    .filter((t) => {
+      if (!slaFilter) return true;
+      const sla = computeSla(t);
+      if (!sla) return false; // sin SLA no entra en "en tiempo"/"atrasada"
+      return slaFilter === "late" ? sla.late : !sla.late;
+    });
 
   container.innerHTML = cols.map((col) => {
     const colTickets = tickets.filter((t) => t.columnId === col.id);
@@ -56,9 +80,10 @@ export function renderBoard() {
 
 function cardHtml(t, user) {
   const owner = getUser(t.ownerId);
-  const movable = can(user, "ticket:move", t) && t.status === "Activo";
+  const movable = can(user, "ticket:move", withCol(t)) && t.status === "Activo";
+  const sla = computeSla(t);
   return `
-    <article class="card ${t.status !== "Activo" ? "card-" + t.status.toLowerCase() : ""}"
+    <article class="card ${t.status !== "Activo" ? "card-" + t.status.toLowerCase() : ""} ${sla?.late ? "card-late" : ""}"
       data-id="${t.id}" draggable="${movable}">
       <div class="card-top">
         <strong class="card-order">#${escapeHtml(t.orderNumber)}</strong>
@@ -70,9 +95,21 @@ function cardHtml(t, user) {
         <span class="tag">${escapeHtml(t.shippingType)}</span>
         <span class="tag">${escapeHtml(t.deliveryMode)}</span>
       </div>
+      ${sla ? `
+        <div class="card-sla ${sla.late ? "sla-late" : "sla-ontime"}">
+          <span class="sla-dot">${sla.late ? "🔴" : "🟢"}</span>
+          <span class="sla-label">${escapeHtml(sla.label)}</span>
+          <span class="sla-count">${sla.late ? "Vencido" : fmtCountdown(sla.remainingMs)}</span>
+        </div>` : ""}
+      ${isCotizacionListaColumn(t) && t.status === "Activo" && t.costDecision !== "accepted" ? `
+        <div class="card-sla sla-await">⏳ Por aceptar costo de envío</div>` : ""}
+      ${isCotizacionListaColumn(t) && t.status === "Activo" && t.costDecision === "accepted"
+        && normalize(t.shippingType) === normalize("Envío pre-pagado") && !t.shippingPaidByClient ? `
+        <div class="card-sla sla-await">⏳ Falta confirmar pago del cliente</div>` : ""}
       <div class="card-footer">
         ${avatarHtml(owner, 24)}
         <span class="card-meta">
+          ${t.shippingCost != null ? `<span class="card-cost" title="Costo de envío">${escapeHtml(fmtMoney(t.shippingCost))}</span>` : ""}
           ${t.commentsCount ? `<span title="Comentarios">💬 ${t.commentsCount}</span>` : ""}
           ${t.attachmentsCount ? `<span title="Adjuntos">📎 ${t.attachmentsCount}</span>` : ""}
         </span>
@@ -112,7 +149,7 @@ function bindBoardEvents(container, user) {
       e.preventDefault();
       zone.classList.remove("drag-over");
       const ticket = getTicket(e.dataTransfer.getData("text/plain"));
-      if (!ticket || !can(user, "ticket:move", ticket)) return;
+      if (!ticket || !can(user, "ticket:move", withCol(ticket))) return;
       try {
         await moveTicket(ticket, zone.dataset.col);
       } catch (err) {
@@ -129,8 +166,10 @@ function bindBoardEvents(container, user) {
 export function openTicketForm(defaultColumnId = null) {
   const user = store.currentUser;
   if (!can(user, "ticket:create")) return;
-  const cols = activeColumns();
-  const canAssign = can(user, "ticket:assignOwner");
+  const sellers = sellableUsers();
+  // El creador aparece por defecto como responsable, pero puede elegir a otro
+  // vendedor (req. 4). El selector se muestra siempre que existan vendedores.
+  const defaultOwner = sellers.some((u) => (u.uid || u.id) === user.uid) ? user.uid : (sellers[0]?.uid || user.uid);
 
   $("#form-modal-content").innerHTML = `
     <header class="modal-header">
@@ -174,18 +213,15 @@ export function openTicketForm(defaultColumnId = null) {
           </select>
         </label>
         <label class="field">
-          <span>Columna *</span>
-          <select class="input" id="tf-column" required>
-            ${cols.map((c) => `<option value="${c.id}" ${c.id === defaultColumnId ? "selected" : ""}>${escapeHtml(c.name)}</option>`).join("")}
+          <span>Vendedor responsable</span>
+          <select class="input" id="tf-owner">
+            ${sellers.map((u) => `<option value="${u.uid || u.id}" ${(u.uid || u.id) === defaultOwner ? "selected" : ""}>${escapeHtml(u.displayName)}</option>`).join("")}
           </select>
         </label>
-        ${canAssign ? `
-          <label class="field">
-            <span>Vendedor responsable</span>
-            <select class="input" id="tf-owner">
-              ${sellableUsers().map((u) => `<option value="${u.uid || u.id}" ${u.uid === user.uid ? "selected" : ""}>${escapeHtml(u.displayName)}</option>`).join("")}
-            </select>
-          </label>` : ""}
+      </div>
+      <div class="field auto-column-note" id="tf-column-note">
+        <span>Columna asignada automáticamente</span>
+        <div class="auto-column-pill" id="tf-column-pill">Selecciona tratamiento y tipo de envío…</div>
       </div>
       <label class="field field-checkbox">
         <input type="checkbox" id="tf-address-na">
@@ -203,9 +239,36 @@ export function openTicketForm(defaultColumnId = null) {
     </form>`;
 
   const naCheck = $("#tf-address-na");
-  naCheck.addEventListener("change", () => {
-    $("#tf-address").disabled = naCheck.checked;
-    $("#tf-address-field").classList.toggle("is-disabled", naCheck.checked);
+  const treatmentSel = $("#tf-treatment");
+  const shippingSel = $("#tf-shipping");
+  const deliverySel = $("#tf-delivery");
+
+  const setAddressDisabled = (disabled) => {
+    naCheck.checked = disabled;
+    $("#tf-address").disabled = disabled;
+    $("#tf-address-field").classList.toggle("is-disabled", disabled);
+  };
+
+  naCheck.addEventListener("change", () => setAddressDisabled(naCheck.checked));
+
+  // Vista previa de la columna destino según las reglas de routing.
+  const updateColumnPill = () => {
+    const pill = $("#tf-column-pill");
+    const targetId = routeColumnId(treatmentSel.value, shippingSel.value, defaultColumnId);
+    pill.textContent = targetId
+      ? `→ ${columnName(targetId)}`
+      : "Selecciona tratamiento y tipo de envío…";
+  };
+
+  treatmentSel.addEventListener("change", updateColumnPill);
+
+  // Req. 5: al elegir "Recolección" → marca N/A y fija Modalidad = Recolección.
+  shippingSel.addEventListener("change", () => {
+    if (normalize(shippingSel.value) === normalize("Recolección")) {
+      setAddressDisabled(true);
+      deliverySel.value = "Recolección";
+    }
+    updateColumnPill();
   });
 
   $("#ticket-form").addEventListener("submit", async (e) => {
@@ -215,14 +278,18 @@ export function openTicketForm(defaultColumnId = null) {
     errBox.classList.add("hidden");
     setSaving(btn, true);
     try {
+      const treatment = treatmentSel.value;
+      const shippingType = shippingSel.value;
+      // Routing automático (reqs. 1, 2, 3): la columna se decide por las reglas.
+      const columnId = routeColumnId(treatment, shippingType, defaultColumnId);
       await createTicket({
         orderNumber: $("#tf-order").value.trim(),
-        treatment: $("#tf-treatment").value,
-        shippingType: $("#tf-shipping").value,
-        deliveryMode: $("#tf-delivery").value,
+        treatment,
+        shippingType,
+        deliveryMode: deliverySel.value,
         priority: $("#tf-priority").value || null,
-        columnId: $("#tf-column").value,
-        ownerId: canAssign ? $("#tf-owner")?.value : user.uid,
+        columnId,
+        ownerId: $("#tf-owner").value,
         addressNA: naCheck.checked,
         shippingAddress: $("#tf-address").value,
       });
@@ -269,10 +336,126 @@ export function openTicketModal(ticketId) {
   detail.unsubs.push(listenTicketActivity(ticketId, renderActivity));
 }
 
+// Sección de decisión del costo en "Cotización de envío lista" (Aceptar/Rechazar).
+function costDecisionSectionHtml(t, user) {
+  if (t.status !== "Activo" || !isCotizacionListaColumn(t)) return "";
+  const prepaid = normalize(t.shippingType) === normalize("Envío pre-pagado");
+  const canDecide = can(user, "ticket:decideCost", t);
+  const canPay = can(user, "ticket:markPaid", t);
+  const costTxt = t.shippingCost != null ? fmtMoney(t.shippingCost) : "—";
+
+  let body;
+  if (t.costDecision !== "accepted") {
+    // Pendiente de aceptar/rechazar (solo el vendedor creador).
+    body = canDecide
+      ? `<div class="detail-actions">
+           <button class="btn btn-primary" id="tm-cost-accept">Aceptar costo</button>
+           <button class="btn btn-ghost btn-danger-text" id="tm-cost-reject">Rechazar costo</button>
+         </div>`
+      : `<p class="text-muted">Esperando que ${escapeHtml(userName(t.createdBy))} (vendedor que creó el ticket) acepte o rechace el costo.</p>`;
+  } else if (prepaid && !t.shippingPaidByClient) {
+    // Aceptado y pre-pagado: falta confirmar el pago del cliente.
+    body = canPay
+      ? `<label class="field field-checkbox">
+           <input type="checkbox" id="tm-paid-check">
+           <span>Envío Pagado por el cliente</span>
+         </label>
+         <button class="btn btn-primary" id="tm-paid-save">Confirmar y continuar</button>`
+      : `<p class="text-muted">Costo aceptado. Falta que el vendedor asignado o el Administrador de Ventas marquen "Envío Pagado por el cliente".</p>`;
+  } else {
+    body = `<p class="text-muted">Costo aceptado.</p>`;
+  }
+
+  return `
+    <div class="sla-box cost-decision-box">
+      <div class="sla-banner">
+        <span>💲</span>
+        <strong class="sla-label">Costo de envío: ${escapeHtml(costTxt)}</strong>
+        <span class="sla-count">${escapeHtml(t.shippingType)}</span>
+      </div>
+      ${body}
+    </div>`;
+}
+
+// Sección SLA del detalle: banner de estatus + campo de fecha/hora por rol.
+function slaSectionHtml(t, user) {
+  if (t.status !== "Activo") return "";
+  const cot = isCotizacionColumn(t);
+  const fab = isFabricacionColumn(t);
+  const alm = isAlmacenColumn(t);
+  if (!cot && !fab && !alm) return "";
+
+  const sla = computeSla(t);
+  const banner = `
+    <div class="sla-banner">
+      <span class="sla-dot">${sla?.late ? "🔴" : "🟢"}</span>
+      <strong class="sla-label">${escapeHtml(sla?.label || "")}</strong>
+      <span class="sla-count">${sla ? (sla.late ? "Vencido" : "Restan " + fmtCountdown(sla.remainingMs)) : ""}</span>
+    </div>`;
+
+  // Columna Cotización de envío → campo Costo de envío (req. 2, 4, 6).
+  if (cot) {
+    const canSet = can(user, "ticket:setShippingCost", t);
+    const current = t.shippingCost != null ? t.shippingCost : "";
+    return `
+      <div class="sla-box ${sla?.late ? "sla-late" : "sla-ontime"}" id="tm-sla-box">
+        ${banner}
+        <label class="field">
+          <span>Costo de envío (MXN)${canSet ? " *" : ""}</span>
+          <input type="number" min="0" step="0.01" inputmode="decimal" class="input"
+            id="tm-cost" placeholder="0.00" value="${escapeHtml(String(current))}" ${canSet ? "" : "disabled"}>
+        </label>
+        ${t.shippingCost != null ? `<p class="text-muted">Actual: <strong>${escapeHtml(fmtMoney(t.shippingCost))}</strong></p>` : ""}
+        ${canSet
+          ? `<button class="btn btn-primary" id="tm-cost-save">Guardar costo y marcar lista</button>`
+          : `<p class="text-muted">Solo el rol de Almacén puede cotizar el envío.</p>`}
+      </div>`;
+  }
+
+  // Columnas Fabricación / Almacén → campo de fecha y hora.
+  const fieldLabel = fab ? "Fecha y Hora en Almacén" : "Fecha y Hora para Listo";
+  const value = fab ? (t.promiseDateWarehouse || "") : (t.promiseDateReady || "");
+  const canSet = fab
+    ? can(user, "ticket:setProductionPromise", t)
+    : can(user, "ticket:setWarehousePromise", t);
+
+  return `
+    <div class="sla-box ${sla?.late ? "sla-late" : "sla-ontime"}" id="tm-sla-box">
+      ${banner}
+      <label class="field">
+        <span>${fieldLabel}${canSet ? " *" : ""}</span>
+        <input type="datetime-local" class="input" id="tm-promise" value="${escapeHtml(value)}" ${canSet ? "" : "disabled"}>
+      </label>
+      ${canSet
+        ? `<button class="btn btn-primary" id="tm-promise-save">Guardar fecha y hora</button>`
+        : `<p class="text-muted">Solo ${fab ? "Producción" : "Almacén"} puede asignar este dato.</p>`}
+    </div>`;
+}
+
+// Refresca el banner SLA del detalle abierto (lo llama el ticker en vivo).
+function refreshDetailSla() {
+  const box = $("#tm-sla-box");
+  if (!box || !detail.ticketId) return;
+  const t = getTicket(detail.ticketId);
+  if (!t) return;
+  const sla = computeSla(t);
+  if (!sla) return;
+  box.classList.toggle("sla-late", sla.late);
+  box.classList.toggle("sla-ontime", !sla.late);
+  const dot = box.querySelector(".sla-dot");
+  const label = box.querySelector(".sla-label");
+  const count = box.querySelector(".sla-count");
+  if (dot) dot.textContent = sla.late ? "🔴" : "🟢";
+  if (label) label.textContent = sla.label;
+  if (count) count.textContent = sla.late ? "Vencido" : "Restan " + fmtCountdown(sla.remainingMs);
+}
+
 function renderTicketDetail(t) {
   const user = store.currentUser;
   const canEdit = can(user, "ticket:edit", t) && t.status === "Activo";
-  const canMove = can(user, "ticket:move", t) && t.status === "Activo";
+  const canCancel = can(user, "ticket:cancel", t) && t.status === "Activo";
+  const canClose = can(user, "ticket:close", t) && t.status === "Activo";
+  const canMove = can(user, "ticket:move", withCol(t)) && t.status === "Activo";
   const canComment = can(user, "comment:create", t) && t.status === "Activo";
   const canAttach = can(user, "attachment:add", t) && t.status === "Activo";
   const canAssign = can(user, "ticket:assignOwner", t);
@@ -303,6 +486,9 @@ function renderTicketDetail(t) {
             ${cols.map((c) => `<option value="${c.id}" ${c.id === t.columnId ? "selected" : ""}>${escapeHtml(c.name)}</option>`).join("")}
           </select>
         </label>` : ""}
+
+      ${slaSectionHtml(t, user)}
+      ${costDecisionSectionHtml(t, user)}
 
       <div class="form-grid">
         <label class="field">
@@ -355,11 +541,11 @@ function renderTicketDetail(t) {
         <span>Última actualización: ${fmtDateTime(t.updatedAt)}</span>
       </div>
 
-      ${canEdit || isSuper || (t.status !== "Activo" && can(user, "ticket:edit", t)) ? `
+      ${canEdit || canClose || canCancel || isSuper || (t.status !== "Activo" && can(user, "ticket:edit", t)) ? `
         <div class="detail-actions">
           ${canEdit ? `<button class="btn btn-primary" id="tm-save">Guardar</button>` : ""}
-          ${canEdit ? `<button class="btn btn-ghost" id="tm-close-ticket">Cerrar ticket</button>` : ""}
-          ${canEdit ? `<button class="btn btn-ghost btn-danger-text" id="tm-cancel-ticket">Cancelar ticket</button>` : ""}
+          ${canClose ? `<button class="btn btn-ghost" id="tm-close-ticket">Cerrar ticket</button>` : ""}
+          ${canCancel ? `<button class="btn btn-ghost btn-danger-text" id="tm-cancel-ticket">Cancelar ticket</button>` : ""}
           ${t.status !== "Activo" && can(user, "ticket:edit", t) ? `<button class="btn btn-ghost" id="tm-reopen">Reabrir</button>` : ""}
           ${isSuper ? `<button class="btn btn-danger" id="tm-delete">Eliminar</button>` : ""}
         </div>` : ""}
@@ -415,6 +601,98 @@ function bindDetailEvents(t, perms) {
       closeDetailListeners();
     } catch (err) {
       toast("No se pudo mover: " + err.message, "error");
+    }
+  });
+
+  // Guardar Fecha y Hora (Producción → en Almacén; Almacén → para Listo).
+  $("#tm-promise-save")?.addEventListener("click", async () => {
+    const value = $("#tm-promise").value;
+    if (!value) {
+      toast("Selecciona una fecha y hora.", "error");
+      return;
+    }
+    const btn = $("#tm-promise-save");
+    setSaving(btn, true);
+    try {
+      if (isFabricacionColumn(t)) await setProductionPromise(t, value);
+      else await setWarehousePromise(t, value);
+      toast("Fecha y hora guardada.", "success");
+      closeModal("ticket-modal");
+      closeDetailListeners();
+    } catch (err) {
+      toast("No se pudo guardar: " + err.message, "error");
+    } finally {
+      setSaving(btn, false, "Guardar fecha y hora");
+    }
+  });
+
+  // Guardar Costo de envío (mueve la tarjeta a "Cotización de envío lista").
+  $("#tm-cost-save")?.addEventListener("click", async () => {
+    const raw = $("#tm-cost").value;
+    if (raw === "" || Number(raw) < 0 || !isFinite(Number(raw))) {
+      toast("Captura un costo de envío válido.", "error");
+      return;
+    }
+    const btn = $("#tm-cost-save");
+    setSaving(btn, true);
+    try {
+      await setShippingCost(t, Number(raw));
+      toast("Costo guardado. Cotización lista.", "success");
+      closeModal("ticket-modal");
+      closeDetailListeners();
+    } catch (err) {
+      toast("No se pudo guardar: " + err.message, "error");
+    } finally {
+      setSaving(btn, false, "Guardar costo y marcar lista");
+    }
+  });
+
+  // Aceptar / Rechazar costo (vendedor creador) en "Cotización de envío lista".
+  $("#tm-cost-accept")?.addEventListener("click", async () => {
+    const btn = $("#tm-cost-accept");
+    setSaving(btn, true);
+    try {
+      await acceptShippingCost(t);
+      toast("Costo aceptado.", "success");
+      closeModal("ticket-modal");
+      closeDetailListeners();
+    } catch (err) {
+      toast("No se pudo aceptar: " + err.message, "error");
+      setSaving(btn, false, "Aceptar costo");
+    }
+  });
+  $("#tm-cost-reject")?.addEventListener("click", async () => {
+    const ok = await confirmDialog({
+      title: "Rechazar costo de envío",
+      message: `El pedido #${t.orderNumber} regresará a Cotización de envío para recotizar. ¿Continuar?`,
+      confirmText: "Rechazar", danger: true,
+    });
+    if (!ok) return;
+    try {
+      await rejectShippingCost(t);
+      toast("Costo rechazado. Regresó a Cotización de envío.", "success");
+      closeModal("ticket-modal");
+      closeDetailListeners();
+    } catch (err) {
+      toast("No se pudo rechazar: " + err.message, "error");
+    }
+  });
+  // Confirmar "Envío Pagado por el cliente" (pre-pagado).
+  $("#tm-paid-save")?.addEventListener("click", async () => {
+    if (!$("#tm-paid-check")?.checked) {
+      toast("Marca la casilla 'Envío Pagado por el cliente' para continuar.", "error");
+      return;
+    }
+    const btn = $("#tm-paid-save");
+    setSaving(btn, true);
+    try {
+      await markShippingPaid(t);
+      toast("Pago confirmado. Ticket en proceso.", "success");
+      closeModal("ticket-modal");
+      closeDetailListeners();
+    } catch (err) {
+      toast("No se pudo confirmar: " + err.message, "error");
+      setSaving(btn, false, "Confirmar y continuar");
     }
   });
 
@@ -689,3 +967,15 @@ function renderActivity(items) {
       <time>${relativeTime(a.createdAt)}</time>
     </li>`).join("")}</ul>`;
 }
+
+// ============================================================
+// Ticker en vivo del SLA (cuenta regresiva)
+// ============================================================
+// app.js emite "sla:tick" periódicamente. Refrescamos las tarjetas del
+// tablero (si está visible) y el banner del detalle (si está abierto).
+on("sla:tick", () => {
+  if (!store.currentUser) return;
+  const boardVisible = !$("#view-board")?.classList.contains("hidden");
+  if (boardVisible) renderBoardColumns();
+  if (detail.ticketId) refreshDetailSla();
+});

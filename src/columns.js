@@ -3,7 +3,8 @@
 import {
   fb, collection, doc, addDoc, updateDoc, deleteDoc, onSnapshot, writeBatch, serverTimestamp,
 } from "./firebase.js";
-import { store, emit, escapeHtml, $ } from "./utils.js";
+import { store, emit, escapeHtml, $, normalize,
+  QUOTE_SHIPPING_TYPES, ROUTING_COLUMN_NAMES } from "./utils.js";
 import { can } from "./permissions.js";
 import { toast, confirmDialog } from "./ui.js";
 
@@ -33,6 +34,32 @@ export function getColumn(id) {
 
 export function columnName(id) {
   return getColumn(id)?.name || "—";
+}
+
+// Busca una columna activa por nombre (tolerante a acentos/mayúsculas).
+export function findColumnByName(name) {
+  const target = normalize(name);
+  return activeColumns().find((c) => normalize(c.name) === target) || null;
+}
+
+// Routing automático al CREAR un ticket (requisitos 1, 2, 3):
+//  - Recolección + Fabricación → columna "Fabricación"
+//  - Recolección + Almacén     → columna "Almacén"
+//  - Envío por cobrar / pre-pagado → columna "Cotización de envío"
+// Devuelve el id de la columna destino, o `fallbackId` si no existe.
+export function routeColumnId(treatment, shippingType, fallbackId = null) {
+  let targetName = null;
+  if (normalize(shippingType) === normalize("Recolección")) {
+    if (normalize(treatment) === normalize(ROUTING_COLUMN_NAMES.FABRICACION)) {
+      targetName = ROUTING_COLUMN_NAMES.FABRICACION;
+    } else if (normalize(treatment) === normalize(ROUTING_COLUMN_NAMES.ALMACEN)) {
+      targetName = ROUTING_COLUMN_NAMES.ALMACEN;
+    }
+  } else if (QUOTE_SHIPPING_TYPES.map(normalize).includes(normalize(shippingType))) {
+    targetName = ROUTING_COLUMN_NAMES.COTIZACION;
+  }
+  const col = targetName ? findColumnByName(targetName) : null;
+  return col?.id || fallbackId || activeColumns()[0]?.id || null;
 }
 
 export async function createColumn(name) {
