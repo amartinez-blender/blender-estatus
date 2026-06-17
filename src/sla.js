@@ -18,6 +18,7 @@ import { addBusinessMs, businessMsBetween } from "./businesstime.js";
 export const SLA_COLUMNS = {
   COTIZACION: "Cotización de envío",
   COTIZACION_LISTA: "Cotización de envío lista",
+  ADMINISTRACION: "Administración",
   FABRICACION: "Fabricación",
   ALMACEN: "Almacén",
   LISTOS: "Listos para recolección",
@@ -56,6 +57,15 @@ export function computeSla(ticket) {
     return null; // ya cotizado (debería haber pasado a "Cotización de envío lista")
   }
 
+  if (col === normalize(SLA_COLUMNS.ADMINISTRACION)) {
+    // El timer corre hasta que Administración marca "Pago Confirmado" (req. 7).
+    if (!ticket.paymentConfirmed) {
+      const deadline = addBusinessMs(enteredAt, durationToMs(sla.admin)).getTime();
+      return build(now > deadline, "Confirmar Pago", deadline);
+    }
+    return null;
+  }
+
   if (col === normalize(SLA_COLUMNS.FABRICACION)) {
     if (!ticket.promiseDateWarehouse) {
       const deadline = addBusinessMs(enteredAt, durationToMs(sla.production)).getTime();
@@ -89,4 +99,7 @@ export function isCotizacionColumn(ticket) {
 }
 export function isCotizacionListaColumn(ticket) {
   return normalize(columnName(ticket?.columnId)) === normalize(SLA_COLUMNS.COTIZACION_LISTA);
+}
+export function isAdministracionColumn(ticket) {
+  return normalize(columnName(ticket?.columnId)) === normalize(SLA_COLUMNS.ADMINISTRACION);
 }

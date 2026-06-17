@@ -56,7 +56,7 @@ service cloud.firestore {
     }
 
     function isValidRole(r) {
-      return r in ['superadmin', 'sales_admin', 'sales_exec', 'production', 'warehouse', 'auditor', 'pending'];
+      return r in ['superadmin', 'sales_admin', 'sales_exec', 'production', 'warehouse', 'administration', 'auditor', 'pending'];
     }
 
     // ---------- /users ----------
@@ -121,6 +121,7 @@ service cloud.firestore {
       return isSuper()
         || hasRole('sales_admin')
         || hasRole('auditor')
+        || hasRole('administration')
         || (hasRole('sales_exec') && (t.ownerId == request.auth.uid || t.createdBy == request.auth.uid))
         || (hasRole('production') && t.treatment == 'Fabricación')
         // Almacén ve sus tickets y todos los que requieren envío (para cotizar).
@@ -131,6 +132,7 @@ service cloud.firestore {
     function canOperateTicketData(t) {
       return isSuper()
         || hasRole('sales_admin')
+        || hasRole('administration')
         || (hasRole('sales_exec') && (t.ownerId == request.auth.uid || t.createdBy == request.auth.uid))
         || (hasRole('production') && t.treatment == 'Fabricación')
         || (hasRole('warehouse') && t.treatment == 'Almacén');
@@ -149,6 +151,8 @@ service cloud.firestore {
         && d.columnId is string && d.columnId.size() > 0
         && d.ownerId is string && d.ownerId.size() > 0
         && (d.priority == null || d.priority in ['Baja', 'Media', 'Alta', 'Urgente'])
+        && (!('tipoPago' in d) || d.tipoPago == null || d.tipoPago in ['Contado', 'Crédito'])
+        && (!('paymentConfirmed' in d) || d.paymentConfirmed is bool)
         && d.addressNA is bool
         && d.shippingAddress is string && d.shippingAddress.size() <= 500
         && (d.addressNA == true || d.shippingAddress.size() > 0);
@@ -201,6 +205,10 @@ service cloud.firestore {
       function onlyPaidMove() {
         return changedKeys().hasOnly(['shippingPaidByClient', 'columnId', 'lastMovedAt', 'updatedAt']);
       }
+      // Administración confirma el pago y la tarjeta avanza por tratamiento.
+      function onlyConfirmPayment() {
+        return changedKeys().hasOnly(['paymentConfirmed', 'columnId', 'lastMovedAt', 'updatedAt']);
+      }
 
       allow read: if canViewTicketData(resource.data);
 
@@ -238,6 +246,8 @@ service cloud.firestore {
               && (onlyMoveFields() || onlyWarehousePromise()))
           // Almacén: cotizar el envío en tickets que lo requieren.
           || (hasRole('warehouse') && isQuoteShipping(resource.data) && onlyShippingCost())
+          // Administración: confirmar el pago (y avanzar por tratamiento).
+          || (hasRole('administration') && onlyConfirmPayment())
           // Contadores: cualquier usuario que puede operar el ticket.
           || (canOperateTicketData(resource.data) && onlyCounterFields())
         );

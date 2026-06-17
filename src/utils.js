@@ -4,6 +4,7 @@
 export const TREATMENTS = ["Fabricación", "Almacén"];
 export const SHIPPING_TYPES = ["Recolección", "Envío por cobrar", "Envío pre-pagado"];
 export const DELIVERY_MODES = ["Domicilio", "Ocurre", "Recolección"];
+export const PAYMENT_TYPES = ["Contado", "Crédito"];
 
 // Tipos de envío que envían el ticket a la columna de cotización.
 export const QUOTE_SHIPPING_TYPES = ["Envío por cobrar", "Envío pre-pagado"];
@@ -14,6 +15,7 @@ export const ROUTING_COLUMN_NAMES = {
   ALMACEN: "Almacén",
   COTIZACION: "Cotización de envío",
   COTIZACION_LISTA: "Cotización de envío lista",
+  ADMINISTRACION: "Administración",
 };
 
 // Formatea un monto a moneda mexicana: "$1,234.50 MXN".
@@ -30,6 +32,7 @@ export const DEFAULT_COLUMNS = [
   "Nuevo",
   "Cotización de envío",
   "Cotización de envío lista",
+  "Administración",
   "Fabricación",
   "Almacén",
   "Listos para recolección",
@@ -189,6 +192,7 @@ export function validateTicketData(data) {
       errors.push(`La dirección no puede exceder ${MAX_ADDRESS_LENGTH} caracteres.`);
   }
   if (data.priority && !PRIORITIES.includes(data.priority)) errors.push("Prioridad inválida.");
+  if (!PAYMENT_TYPES.includes(data.tipoPago)) errors.push("Selecciona el tipo de pago (Contado o Crédito).");
   if (!data.columnId) errors.push("Selecciona una columna.");
   return errors;
 }

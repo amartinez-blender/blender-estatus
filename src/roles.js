@@ -7,6 +7,7 @@ export const ROLES = {
   SALES_EXEC: "sales_exec",
   PRODUCTION: "production",
   WAREHOUSE: "warehouse",
+  ADMINISTRATION: "administration",
   AUDITOR: "auditor",
   PENDING: "pending",
 };
@@ -17,6 +18,7 @@ export const ROLE_LABELS = {
   [ROLES.SALES_EXEC]: "Ejecutivo de Ventas",
   [ROLES.PRODUCTION]: "Producción",
   [ROLES.WAREHOUSE]: "Almacén",
+  [ROLES.ADMINISTRATION]: "Administración",
   [ROLES.AUDITOR]: "Auditor",
   [ROLES.PENDING]: "Pendiente de aprobación",
 };
@@ -28,6 +30,7 @@ export const ASSIGNABLE_ROLES = [
   ROLES.SALES_EXEC,
   ROLES.PRODUCTION,
   ROLES.WAREHOUSE,
+  ROLES.ADMINISTRATION,
   ROLES.AUDITOR,
   ROLES.PENDING,
 ];

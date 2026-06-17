@@ -236,6 +236,13 @@ function renderSettingsAdmin(container) {
           </div>
         </div>
         <div class="sla-row">
+          <span class="sla-row-label">Administración → marcar "Pago Confirmado"</span>
+          <div class="sla-inputs">
+            <label>Horas <input type="number" min="0" class="input input-sm" id="sla-admin-h" value="${sla.admin.hours}"></label>
+            <label>Minutos <input type="number" min="0" max="59" class="input input-sm" id="sla-admin-m" value="${sla.admin.minutes}"></label>
+          </div>
+        </div>
+        <div class="sla-row">
           <span class="sla-row-label">Producción → asignar "Fecha y Hora en Almacén"</span>
           <div class="sla-inputs">
             <label>Horas <input type="number" min="0" class="input input-sm" id="sla-prod-h" value="${sla.production.hours}"></label>
@@ -300,6 +307,7 @@ function renderSettingsAdmin(container) {
     try {
       await saveSlaSettings({
         quote: { hours: $("#sla-quote-h").value, minutes: $("#sla-quote-m").value },
+        admin: { hours: $("#sla-admin-h").value, minutes: $("#sla-admin-m").value },
         production: { hours: $("#sla-prod-h").value, minutes: $("#sla-prod-m").value },
         warehouse: { hours: $("#sla-wh-h").value, minutes: $("#sla-wh-m").value },
       });

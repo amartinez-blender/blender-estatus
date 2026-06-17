@@ -17,6 +17,7 @@ const filters = {
 // Estados de atraso (req. 4).
 const BREACH_PHASES = [
   "Cotización de envío",
+  "Confirmar Pago",
   "Asignar fecha (Producción)",
   "Cambiar a Almacén",
   "Asignar fecha (Almacén)",

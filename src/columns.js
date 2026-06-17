@@ -42,19 +42,14 @@ export function findColumnByName(name) {
   return activeColumns().find((c) => normalize(c.name) === target) || null;
 }
 
-// Routing automático al CREAR un ticket (requisitos 1, 2, 3):
-//  - Recolección + Fabricación → columna "Fabricación"
-//  - Recolección + Almacén     → columna "Almacén"
-//  - Envío por cobrar / pre-pagado → columna "Cotización de envío"
-// Devuelve el id de la columna destino, o `fallbackId` si no existe.
+// Routing automático al CREAR un ticket:
+//  - Recolección → columna "Administración" (todos pasan por Administración).
+//  - Envío por cobrar / pre-pagado → columna "Cotización de envío".
+// (Tras cotizar y confirmar el pago, Administración los manda a Fab/Almacén.)
 export function routeColumnId(treatment, shippingType, fallbackId = null) {
   let targetName = null;
   if (normalize(shippingType) === normalize("Recolección")) {
-    if (normalize(treatment) === normalize(ROUTING_COLUMN_NAMES.FABRICACION)) {
-      targetName = ROUTING_COLUMN_NAMES.FABRICACION;
-    } else if (normalize(treatment) === normalize(ROUTING_COLUMN_NAMES.ALMACEN)) {
-      targetName = ROUTING_COLUMN_NAMES.ALMACEN;
-    }
+    targetName = ROUTING_COLUMN_NAMES.ADMINISTRACION;
   } else if (QUOTE_SHIPPING_TYPES.map(normalize).includes(normalize(shippingType))) {
     targetName = ROUTING_COLUMN_NAMES.COTIZACION;
   }

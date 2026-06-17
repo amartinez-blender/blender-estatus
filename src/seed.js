@@ -30,27 +30,23 @@ export async function ensureSeed() {
       await batch.commit();
       console.info("[seed] Columnas por defecto creadas.");
     } else {
-      // Instalaciones existentes: asegura la columna "Cotización de envío lista".
-      const exists = colsSnap.docs.some(
-        (d) => normalize(d.data().name) === normalize(ROUTING_COLUMN_NAMES.COTIZACION_LISTA)
-      );
-      if (!exists) {
-        // La colocamos justo después de "Cotización de envío" (orden fraccionario,
-        // así no hay que reordenar las demás). Si no existe, va al final.
-        const cotiz = colsSnap.docs.find(
-          (d) => normalize(d.data().name) === normalize(ROUTING_COLUMN_NAMES.COTIZACION)
-        );
+      // Instalaciones existentes: asegura columnas nuevas si faltan.
+      const has = (name) => colsSnap.docs.some((d) => normalize(d.data().name) === normalize(name));
+      const orderAfter = (name) => {
+        const ref = colsSnap.docs.find((d) => normalize(d.data().name) === normalize(name));
         const maxOrder = Math.max(0, ...colsSnap.docs.map((d) => d.data().order ?? 0));
-        const order = cotiz ? (cotiz.data().order ?? 0) + 0.5 : maxOrder + 1;
+        return ref ? (ref.data().order ?? 0) + 0.5 : maxOrder + 1;
+      };
+      const ensureColumn = async (name, afterName) => {
+        if (has(name)) return;
         await addDoc(collection(fb.db, "columns"), {
-          name: ROUTING_COLUMN_NAMES.COTIZACION_LISTA,
-          order,
-          active: true,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
+          name, order: orderAfter(afterName), active: true,
+          createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
         });
-        console.info("[seed] Columna 'Cotización de envío lista' creada.");
-      }
+        console.info(`[seed] Columna '${name}' creada.`);
+      };
+      await ensureColumn(ROUTING_COLUMN_NAMES.COTIZACION_LISTA, ROUTING_COLUMN_NAMES.COTIZACION);
+      await ensureColumn(ROUTING_COLUMN_NAMES.ADMINISTRACION, ROUTING_COLUMN_NAMES.COTIZACION_LISTA);
     }
 
     // Configuración inicial

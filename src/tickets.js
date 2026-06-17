@@ -132,6 +132,8 @@ export async function createTicket(data) {
     createdBy: user.uid,
     ownerId: data.ownerId || user.uid,
     priority: data.priority || null,
+    tipoPago: data.tipoPago,    // "Contado" | "Crédito" (mandatorio, lo fija el Ejecutivo)
+    paymentConfirmed: false,    // lo marca Administración antes de avanzar
     status: "Activo",
     promiseDateWarehouse: null, // "Fecha y Hora en Almacén" (lo asigna Producción)
     promiseDateReady: null,     // "Fecha y Hora para Listo" (lo asigna Almacén)
@@ -171,6 +173,7 @@ const EDITABLE_LABELS = {
   addressNA: "dirección (N/A)",
   shippingAddress: "dirección de envío",
   priority: "prioridad",
+  tipoPago: "tipo de pago",
 };
 
 export async function updateTicket(ticket, changes) {
@@ -373,6 +376,7 @@ async function notifyColumnEntry(ticket, colNameStr) {
   let role = null, icon = "🔔", type = "moved";
   if (c === normalize("Fabricación")) { role = ROLES.PRODUCTION; icon = "🏭"; type = "production_in"; }
   else if (c === normalize("Almacén") || c === normalize("Cotización de envío")) { role = ROLES.WAREHOUSE; icon = "📦"; type = "warehouse_in"; }
+  else if (c === normalize("Administración")) { role = ROLES.ADMINISTRATION; icon = "🧾"; type = "updated"; }
   else if (c === normalize("Listos para recolección")) { role = ROLES.SALES_EXEC; icon = "✅"; type = "moved"; }
   if (!role) return;
 
@@ -431,11 +435,11 @@ export async function acceptShippingCost(ticket) {
   await moveAfterCostDecision(ticket, "accepted");
 }
 
-// Pre-pagado: el vendedor asignado o el Admin de Ventas confirma el pago y la
-// tarjeta pasa a la columna de su Tratamiento.
+// Pre-pagado: el vendedor asignado o el Admin de Ventas confirma el pago del
+// cliente y la tarjeta pasa a la columna Administración (gate antes de Fab/Alm).
 export async function markShippingPaid(ticket) {
   const user = store.currentUser;
-  const target = findColumnByName(ticket.treatment); // "Fabricación" o "Almacén"
+  const target = findColumnByName(ROUTING_COLUMN_NAMES.ADMINISTRACION);
   const updates = { shippingPaidByClient: true, updatedAt: serverTimestamp() };
   if (target) { updates.columnId = target.id; updates.lastMovedAt = serverTimestamp(); }
   await updateDoc(doc(fb.db, "tickets", ticket.id), updates);
@@ -450,10 +454,10 @@ export async function markShippingPaid(ticket) {
   }
 }
 
-// Movimiento común al aceptar (por cobrar) o al confirmar pago.
+// Al aceptar el costo (por cobrar), la tarjeta pasa a Administración.
 async function moveAfterCostDecision(ticket, decision) {
   const user = store.currentUser;
-  const target = findColumnByName(ticket.treatment);
+  const target = findColumnByName(ROUTING_COLUMN_NAMES.ADMINISTRACION);
   const updates = { costDecision: decision, updatedAt: serverTimestamp() };
   if (target) { updates.columnId = target.id; updates.lastMovedAt = serverTimestamp(); }
   await updateDoc(doc(fb.db, "tickets", ticket.id), updates);
@@ -496,6 +500,40 @@ export async function rejectShippingCost(ticket) {
   await sendGoogleChat(
     `🔁 *Pedido ${ticket.orderNumber}* — costo rechazado, requiere recotizar. ${roleMentions(ROLES.WAREHOUSE)}`.trim()
   );
+}
+
+// Administración marca "Pago Confirmado": la tarjeta avanza a Fabricación o
+// Almacén según el Tratamiento, y se avisa al Ejecutivo de Ventas (reqs. 8, 9).
+export async function confirmPayment(ticket) {
+  const user = store.currentUser;
+
+  // Atraso (en tiempo hábil) si se confirmó fuera del SLA de Administración.
+  const entered = toDate(ticket.lastMovedAt)?.getTime() ?? Date.now();
+  const deadline = addBusinessMs(entered, durationToMs(getSla().admin)).getTime();
+  recordBreach(ticket, "Confirmar Pago", businessMsBetween(deadline, Date.now()));
+
+  const target = findColumnByName(ticket.treatment); // "Fabricación" o "Almacén"
+  const updates = { paymentConfirmed: true, updatedAt: serverTimestamp() };
+  if (target) { updates.columnId = target.id; updates.lastMovedAt = serverTimestamp(); }
+  await updateDoc(doc(fb.db, "tickets", ticket.id), updates);
+
+  await logActivity(ticket.id, "updated",
+    `${user.displayName} confirmó el pago.${target ? ` Pasó a ${target.name}.` : ""}`);
+
+  // Aviso al Ejecutivo de Ventas asignado (req. 8).
+  await notifyUsers([ticket.ownerId], {
+    ticketId: ticket.id, type: "updated",
+    title: `Pedido ${ticket.orderNumber}`,
+    message: `Pago Confirmado.${target ? ` El pedido avanzó a ${target.name}.` : ""}`,
+  });
+  const owner = store.users.find((u) => (u.uid || u.id) === ticket.ownerId);
+  const mention = owner?.chatUserId
+    ? `<users/${owner.chatUserId}>`
+    : `@${owner?.displayName || userName(ticket.ownerId)}`;
+  await sendGoogleChat(`✅ *Pedido ${ticket.orderNumber}* — Pago Confirmado. ${mention}`.trim());
+
+  // Aviso al equipo de la columna destino (Producción/Almacén).
+  if (target) await notifyColumnEntry(ticket, target.name);
 }
 
 // Solo SuperAdmin (reforzado en rules). Libera el número de pedido.

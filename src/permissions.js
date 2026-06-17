@@ -31,7 +31,7 @@ export function can(user, action, resource = null) {
   switch (action) {
     // ---------- Tickets ----------
     case "ticket:view":
-      if (r === ROLES.SALES_ADMIN || r === ROLES.AUDITOR) return true;
+      if (r === ROLES.SALES_ADMIN || r === ROLES.AUDITOR || r === ROLES.ADMINISTRATION) return true;
       if (r === ROLES.SALES_EXEC) return ownsTicket(user, resource);
       if (r === ROLES.PRODUCTION || r === ROLES.WAREHOUSE) return treatmentMatches(user, resource);
       return false;
@@ -79,6 +79,14 @@ export function can(user, action, resource = null) {
     case "ticket:setShippingCost":
       return r === ROLES.WAREHOUSE;
 
+    // Tipo de pago → solo Ejecutivo de Ventas (dueño). Mandatorio al crear.
+    case "ticket:setPaymentType":
+      return r === ROLES.SALES_EXEC && ownsTicket(user, resource);
+
+    // Pago Confirmado → solo Administración, y solo en la columna Administración.
+    case "ticket:confirmPayment":
+      return r === ROLES.ADMINISTRATION && colMatches(resource, "Administración");
+
     // Aceptar/Rechazar el costo → solo el vendedor que CREÓ el ticket.
     case "ticket:decideCost":
       return (r === ROLES.SALES_EXEC || r === ROLES.SALES_ADMIN) &&
@@ -98,7 +106,7 @@ export function can(user, action, resource = null) {
     case "comment:create":
     case "attachment:add":
       if (r === ROLES.AUDITOR) return false;
-      if (r === ROLES.SALES_ADMIN) return true;
+      if (r === ROLES.SALES_ADMIN || r === ROLES.ADMINISTRATION) return true;
       if (r === ROLES.SALES_EXEC) return ownsTicket(user, resource);
       if (r === ROLES.PRODUCTION || r === ROLES.WAREHOUSE) return treatmentMatches(user, resource);
       return false;
