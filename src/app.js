@@ -450,6 +450,8 @@ function bindStaticEvents() {
   on("users:changed", () => {
     if (!appStarted) return;
     if (currentView === "admin" && adminTab === "users") renderAdmin();
+    // El tablero muestra avatares y el filtro de vendedores depende de los usuarios.
+    if (currentView === "board") renderBoard();
   });
   on("notifications:changed", () => {
     if (!appStarted) return;

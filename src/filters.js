@@ -31,75 +31,84 @@ function currentLabel() {
   return `${sel.length} vendedores`;
 }
 
-// Renderiza el control dentro de `host`. `onChange` se llama tras cada cambio
-// (para refrescar solo los datos de la vista, sin reconstruir el control).
-// Si el control ya existe en `host`, solo actualiza la etiqueta (mantiene el
-// panel abierto durante una selección múltiple y sobrevive a re-renders).
+// Renderiza el control dentro de `host`. La LISTA de vendedores se construye
+// cada vez que se ABRE el panel (lee los usuarios en ese momento), así no
+// depende de cuándo se cargaron. `onChange` se llama tras cada cambio.
 export function renderVendorFilter(host, onChange) {
   if (!host) return;
-  if (host.dataset.ready === "1") {
-    const lbl = $(".vfilter-label", host);
-    if (lbl) lbl.textContent = currentLabel();
-    return;
+
+  // Construir el contenedor (botón + panel vacío) una sola vez.
+  if (host.dataset.ready !== "1") {
+    host.innerHTML = `
+      <div class="vfilter">
+        <button type="button" class="btn btn-ghost vfilter-btn" aria-haspopup="true" aria-expanded="false">
+          <span>👤</span> <span class="vfilter-label">${escapeHtml(currentLabel())}</span> <span class="vfilter-caret">▾</span>
+        </button>
+        <div class="vfilter-panel hidden" role="menu"></div>
+      </div>`;
+    host.dataset.ready = "1";
+
+    const btn = $(".vfilter-btn", host);
+    const panel = $(".vfilter-panel", host);
+
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const willShow = panel.classList.contains("hidden");
+      if (willShow) buildVendorPanel(host, panel, onChange); // lista fresca al abrir
+      panel.classList.toggle("hidden");
+      btn.setAttribute("aria-expanded", String(willShow));
+    });
+    document.addEventListener("click", (e) => {
+      if (!host.contains(e.target)) panel.classList.add("hidden");
+    });
   }
 
+  const lbl = $(".vfilter-label", host);
+  if (lbl) lbl.textContent = currentLabel();
+}
+
+// Llena el panel con los vendedores actuales y enlaza los eventos.
+function buildVendorPanel(host, panel, onChange) {
   const sellers = sellableUsers();
   const sel = store.vendorFilter || [];
+  console.info("[vfilter] usuarios:", store.users.length, "vendedores:", sellers.length,
+    sellers.map((u) => `${u.displayName}:${u.role}`));
 
-  host.innerHTML = `
-    <div class="vfilter">
-      <button type="button" class="btn btn-ghost vfilter-btn" aria-haspopup="true" aria-expanded="false">
-        <span>👤</span> <span class="vfilter-label">${escapeHtml(currentLabel())}</span> <span class="vfilter-caret">▾</span>
-      </button>
-      <div class="vfilter-panel hidden" role="menu">
-        <label class="vfilter-opt vfilter-all">
-          <input type="checkbox" class="vfilter-all-check" ${sel.length ? "" : "checked"}>
-          <strong>Todos</strong>
-        </label>
-        <div class="vfilter-list">
-          ${sellers.map((u) => {
+  panel.innerHTML = `
+    <label class="vfilter-opt vfilter-all">
+      <input type="checkbox" class="vfilter-all-check" ${sel.length ? "" : "checked"}>
+      <strong>Todos</strong>
+    </label>
+    <div class="vfilter-list">
+      ${sellers.length
+        ? sellers.map((u) => {
             const id = u.uid || u.id;
             return `<label class="vfilter-opt">
               <input type="checkbox" class="vfilter-check" value="${id}" ${sel.includes(id) ? "checked" : ""}>
               ${avatarHtml(u, 20)} <span>${escapeHtml(u.displayName)}</span>
             </label>`;
-          }).join("")}
-        </div>
-      </div>
+          }).join("")
+        : `<p class="text-muted vfilter-empty">No hay vendedores activos.</p>`}
     </div>`;
-  host.dataset.ready = "1";
 
-  const btn = $(".vfilter-btn", host);
-  const panel = $(".vfilter-panel", host);
-  const allCheck = $(".vfilter-all-check", host);
+  const allCheck = $(".vfilter-all-check", panel);
   const label = $(".vfilter-label", host);
-
-  btn.addEventListener("click", (e) => {
-    e.stopPropagation();
-    const open = panel.classList.toggle("hidden") === false;
-    btn.setAttribute("aria-expanded", String(open));
-  });
-  // Cerrar al hacer clic fuera.
-  document.addEventListener("click", (e) => {
-    if (!e.target.closest(".vfilter")) panel.classList.add("hidden");
-  });
-
   const apply = () => {
-    label.textContent = currentLabel();
+    if (label) label.textContent = currentLabel();
     onChange?.();
   };
 
   allCheck.addEventListener("change", () => {
     if (allCheck.checked) {
-      $$(".vfilter-check", host).forEach((c) => (c.checked = false));
+      $$(".vfilter-check", panel).forEach((c) => (c.checked = false));
       store.vendorFilter = [];
     }
     apply();
   });
 
-  $$(".vfilter-check", host).forEach((cb) => {
+  $$(".vfilter-check", panel).forEach((cb) => {
     cb.addEventListener("change", () => {
-      const ids = $$(".vfilter-check", host).filter((c) => c.checked).map((c) => c.value);
+      const ids = $$(".vfilter-check", panel).filter((c) => c.checked).map((c) => c.value);
       store.vendorFilter = ids;
       allCheck.checked = ids.length === 0;
       apply();
