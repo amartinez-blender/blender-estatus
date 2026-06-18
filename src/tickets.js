@@ -28,61 +28,27 @@ import { addBusinessMs, businessMsBetween } from "./businesstime.js";
 export function listenTickets() {
   stopTicketListeners();
   const user = store.currentUser;
-  if (!user) return;
-
-  const col = collection(fb.db, "tickets");
-  let queries = [];
-
-  switch (user.role) {
-    case ROLES.SUPERADMIN:
-    case ROLES.SALES_ADMIN:
-    case ROLES.AUDITOR:
-      queries = [query(col)];
-      break;
-    case ROLES.SALES_EXEC:
-      queries = [
-        query(col, where("ownerId", "==", user.uid)),
-        query(col, where("createdBy", "==", user.uid)),
-      ];
-      break;
-    case ROLES.PRODUCTION:
-      queries = [query(col, where("treatment", "==", ROLE_TREATMENT[user.role]))];
-      break;
-    case ROLES.WAREHOUSE:
-      // Almacén ve sus tickets (tratamiento Almacén) y además todos los que
-      // requieren envío, para poder cotizarlos (Cotización de envío).
-      queries = [
-        query(col, where("treatment", "==", ROLE_TREATMENT[ROLES.WAREHOUSE])),
-        query(col, where("shippingType", "in", QUOTE_SHIPPING_TYPES)),
-      ];
-      break;
-    default:
-      store.tickets = [];
-      emit("tickets:changed", []);
-      return;
+  if (!user || user.role === ROLES.PENDING) {
+    store.tickets = [];
+    emit("tickets:changed", []);
+    return;
   }
 
-  // Varias queries pueden traer el mismo doc: se fusionan por id.
-  const buckets = queries.map(() => new Map());
-  store.unsubs.tickets = [];
-
-  queries.forEach((q, i) => {
-    const unsub = onSnapshot(
+  // Req. 6: TODOS los roles ven todas las tarjetas en Tablero y Dashboard.
+  // La edición/movimiento sigue restringida por rol (ver permissions.js y reglas).
+  const q = query(collection(fb.db, "tickets"));
+  store.unsubs.tickets = [
+    onSnapshot(
       q,
       (snap) => {
-        buckets[i].clear();
-        snap.docs.forEach((d) => buckets[i].set(d.id, { id: d.id, ...d.data() }));
-        const merged = new Map();
-        buckets.forEach((b) => b.forEach((v, k) => merged.set(k, v)));
-        store.tickets = [...merged.values()].sort(
-          (a, b) => (toDate(b.createdAt)?.getTime() || 0) - (toDate(a.createdAt)?.getTime() || 0)
-        );
+        store.tickets = snap.docs
+          .map((d) => ({ id: d.id, ...d.data() }))
+          .sort((a, b) => (toDate(b.createdAt)?.getTime() || 0) - (toDate(a.createdAt)?.getTime() || 0));
         emit("tickets:changed", store.tickets);
       },
       (err) => console.error("[tickets] listener:", err)
-    );
-    store.unsubs.tickets.push(unsub);
-  });
+    ),
+  ];
 }
 
 function stopTicketListeners() {

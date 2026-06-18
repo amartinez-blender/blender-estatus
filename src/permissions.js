@@ -30,11 +30,9 @@ export function can(user, action, resource = null) {
 
   switch (action) {
     // ---------- Tickets ----------
+    // Req. 6: todos los roles (activos, no pendientes) ven todas las tarjetas.
     case "ticket:view":
-      if (r === ROLES.SALES_ADMIN || r === ROLES.AUDITOR || r === ROLES.ADMINISTRATION) return true;
-      if (r === ROLES.SALES_EXEC) return ownsTicket(user, resource);
-      if (r === ROLES.PRODUCTION || r === ROLES.WAREHOUSE) return treatmentMatches(user, resource);
-      return false;
+      return true;
 
     case "ticket:create":
       return r === ROLES.SALES_ADMIN || r === ROLES.SALES_EXEC;
@@ -123,8 +121,9 @@ export function can(user, action, resource = null) {
         can(user, "attachment:add", resource?.ticket);
 
     // ---------- Vistas ----------
+    // Req. 6: todos los roles pueden ver el Dashboard (solo lectura).
     case "dashboard:view":
-      return r === ROLES.SALES_ADMIN || r === ROLES.AUDITOR;
+      return true;
 
     case "activity:view": // resource = ticket
       return can(user, "ticket:view", resource);

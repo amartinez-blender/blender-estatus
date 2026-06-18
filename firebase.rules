@@ -117,15 +117,10 @@ service cloud.firestore {
     }
 
     // ---------- Helpers de tickets ----------
+    // Req. 6: cualquier usuario operativo ve todas las tarjetas (la edición se
+    // restringe por rol en las reglas de update de abajo).
     function canViewTicketData(t) {
-      return isSuper()
-        || hasRole('sales_admin')
-        || hasRole('auditor')
-        || hasRole('administration')
-        || (hasRole('sales_exec') && (t.ownerId == request.auth.uid || t.createdBy == request.auth.uid))
-        || (hasRole('production') && t.treatment == 'Fabricación')
-        // Almacén ve sus tickets y todos los que requieren envío (para cotizar).
-        || (hasRole('warehouse') && (t.treatment == 'Almacén' || isQuoteShipping(t)));
+      return isStaff() && role() != 'pending';
     }
 
     // Puede comentar/adjuntar/operar (excluye auditor).
@@ -334,8 +329,8 @@ service cloud.firestore {
 
     // ---------- /slaBreaches (analítica histórica de atrasos) ----------
     match /slaBreaches/{breachId} {
-      // Lectura solo para vistas globales (Dashboard).
-      allow read: if isSuper() || hasRole('sales_admin') || hasRole('auditor');
+      // Lectura para cualquier usuario operativo (el Dashboard es visible para todos).
+      allow read: if isStaff() && role() != 'pending';
       // Cualquier usuario operativo registra atrasos; inmutables.
       allow create: if isStaff()
         && role() != 'auditor'

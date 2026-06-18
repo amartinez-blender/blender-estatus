@@ -104,7 +104,11 @@ export async function login() {
 
 export async function logout() {
   // Detener todos los listeners antes de cerrar sesión para evitar errores de permisos.
-  Object.values(store.unsubs).forEach((unsub) => unsub?.());
+  // Algunos listeners se guardan como arrays (p. ej. tickets), otros como función.
+  Object.values(store.unsubs).forEach((u) => {
+    if (Array.isArray(u)) u.forEach((fn) => { try { fn?.(); } catch {} });
+    else { try { u?.(); } catch {} }
+  });
   store.unsubs = {};
   await signOut(fb.auth);
 }

@@ -184,7 +184,7 @@ textarea.input { resize: vertical; }
 .dropdown-item {
   display: block; width: 100%; text-align: left; background: none; border: none;
   font-family: var(--font); font-size: 0.88rem; font-weight: 500;
-  padding: 11px 14px; cursor: pointer;
+  padding: 11px 14px; cursor: pointer; color: var(--color-text);
 }
 .dropdown-item:hover { background: var(--color-bg); }
 
@@ -194,6 +194,7 @@ textarea.input { resize: vertical; }
   display: flex; gap: 10px; width: 100%; text-align: left; background: none;
   border: none; border-bottom: 1px solid var(--color-border);
   padding: 11px 14px; cursor: pointer; font-family: var(--font);
+  color: var(--color-text); /* los <button> no heredan color: necesario en modo oscuro */
 }
 .notif-item:hover { background: var(--color-bg); }
 .notif-item.is-unread { background: var(--color-yellow-soft); }
