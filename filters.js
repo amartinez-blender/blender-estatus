@@ -71,6 +71,8 @@ export function renderVendorFilter(host, onChange) {
 function buildVendorPanel(host, panel, onChange) {
   const sellers = sellableUsers();
   const sel = store.vendorFilter || [];
+  console.info("[vfilter] usuarios:", store.users.length, "vendedores:", sellers.length,
+    sellers.map((u) => `${u.displayName}:${u.role}`));
 
   panel.innerHTML = `
     <label class="vfilter-opt vfilter-all">
