@@ -188,6 +188,10 @@ export function openTicketForm(defaultColumnId = null) {
           <input class="input" id="tf-order" inputmode="numeric" pattern="\\d{1,5}"
             maxlength="5" placeholder="12345" required>
         </label>
+        <label class="field hidden" id="tf-pedido-field">
+          <span>Número de pedido *</span>
+          <input class="input" id="tf-pedido" inputmode="numeric" maxlength="10" placeholder="Ej. 100245">
+        </label>
         <label class="field">
           <span>Tratamiento *</span>
           <select class="input" id="tf-treatment" required>
@@ -274,11 +278,14 @@ export function openTicketForm(defaultColumnId = null) {
   treatmentSel.addEventListener("change", updateColumnPill);
 
   // Req. 5: al elegir "Recolección" → marca N/A y fija Modalidad = Recolección.
+  // Además, en Recolección el # de pedido es obligatorio desde la creación.
   shippingSel.addEventListener("change", () => {
-    if (normalize(shippingSel.value) === normalize("Recolección")) {
+    const esRecoleccion = normalize(shippingSel.value) === normalize("Recolección");
+    if (esRecoleccion) {
       setAddressDisabled(true);
       deliverySel.value = "Recolección";
     }
+    $("#tf-pedido-field").classList.toggle("hidden", !esRecoleccion);
     updateColumnPill();
   });
 
@@ -300,6 +307,7 @@ export function openTicketForm(defaultColumnId = null) {
         deliveryMode: deliverySel.value,
         priority: $("#tf-priority").value || null,
         tipoPago: $("#tf-payment").value,
+        pedidoNumber: $("#tf-pedido")?.value.trim() || null,
         columnId,
         ownerId: $("#tf-owner").value,
         addressNA: naCheck.checked,

@@ -75,8 +75,14 @@ export async function createTicket(data) {
   const user = store.currentUser;
   const errors = validateTicketData(data);
   if (errors.length) throw new Error(errors[0]);
+  // En Recolección el # de pedido es obligatorio desde la creación (no pasa por
+  // "Aceptar costo"). En los demás tipos se asigna luego al aceptar el costo.
+  const isRecoleccion = normalize(data.shippingType) === normalize("Recolección");
+  if (isRecoleccion && !/^\d{1,10}$/.test(String(data.pedidoNumber || "").trim())) {
+    throw new Error("El # de pedido es obligatorio para Recolección.");
+  }
   if (await isOrderNumberTaken(data.orderNumber)) {
-    throw new Error(`El pedido ${data.orderNumber} ya existe.`);
+    throw new Error(`La cotización ${data.orderNumber} ya existe.`);
   }
 
   const ticketRef = doc(collection(fb.db, "tickets"));
@@ -104,7 +110,7 @@ export async function createTicket(data) {
     promiseDateWarehouse: null, // "Fecha y Hora en Almacén" (lo asigna Producción)
     promiseDateReady: null,     // "Fecha y Hora para Listo" (lo asigna Almacén)
     shippingCost: null,         // Costo de envío en MXN (se llena en Cotización)
-    pedidoNumber: null,         // # de pedido (se asigna al aceptar el costo)
+    pedidoNumber: data.pedidoNumber ? String(data.pedidoNumber).trim() : null, // # de pedido
     costDecision: null,         // null | "accepted" | "rejected" (decide el creador)
     shippingPaidByClient: false,// pre-pagado: el cliente ya pagó el envío
     commentsCount: 0,
