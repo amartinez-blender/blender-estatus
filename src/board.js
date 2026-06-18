@@ -2,6 +2,7 @@
 // modal de creación y panel de detalle del ticket.
 
 import { store, $, $$, on, escapeHtml, relativeTime, fmtDateTime, fmtFileSize, fmtCountdown, fmtMoney, normalize,
+  mainOrderNumber, orderRef,
   TREATMENTS, SHIPPING_TYPES, DELIVERY_MODES, PRIORITIES, PAYMENT_TYPES, MAX_ADDRESS_LENGTH } from "./utils.js";
 import { can, visibleTickets } from "./permissions.js";
 import { activeColumns, getColumn, columnName, routeColumnId } from "./columns.js";
@@ -86,7 +87,8 @@ function cardHtml(t, user) {
     <article class="card ${t.status !== "Activo" ? "card-" + t.status.toLowerCase() : ""} ${sla?.late ? "card-late" : ""}"
       data-id="${t.id}" draggable="${movable}">
       <div class="card-top">
-        <strong class="card-order">#${escapeHtml(t.orderNumber)}</strong>
+        <strong class="card-order">${escapeHtml(orderRef(t))}</strong>
+        ${t.pedidoNumber ? `<span class="tag tag-cot" title="Número de cotización">Cot. #${escapeHtml(t.orderNumber)}</span>` : ""}
         ${priorityBadge(t.priority)}
         ${t.status !== "Activo" ? statusBadge(t.status) : ""}
       </div>
@@ -182,7 +184,7 @@ export function openTicketForm(defaultColumnId = null) {
       <div class="form-errors hidden" id="tf-errors"></div>
       <div class="form-grid">
         <label class="field">
-          <span>Número de pedido *</span>
+          <span>Número de cotización *</span>
           <input class="input" id="tf-order" inputmode="numeric" pattern="\\d{1,5}"
             maxlength="5" placeholder="12345" required>
         </label>
@@ -358,7 +360,11 @@ function costDecisionSectionHtml(t, user) {
   if (t.costDecision !== "accepted") {
     // Pendiente de aceptar/rechazar (solo el vendedor creador).
     body = canDecide
-      ? `<div class="detail-actions">
+      ? `<label class="field">
+           <span># de pedido * <small class="text-muted">(requerido al aceptar)</small></span>
+           <input class="input" id="tm-pedido" inputmode="numeric" maxlength="10" placeholder="Ej. 100245">
+         </label>
+         <div class="detail-actions">
            <button class="btn btn-primary" id="tm-cost-accept">Aceptar costo</button>
            <button class="btn btn-ghost btn-danger-text" id="tm-cost-reject">Rechazar costo</button>
          </div>`
@@ -499,8 +505,9 @@ function renderTicketDetail(t) {
   $("#ticket-modal-content").innerHTML = `
     <header class="modal-header">
       <div>
-        <h2>Pedido #${escapeHtml(t.orderNumber)}</h2>
+        <h2>${escapeHtml(orderRef(t))}</h2>
         <div class="detail-sub">
+          ${t.pedidoNumber ? `<span class="badge badge-muted"># Cotización: ${escapeHtml(t.orderNumber)}</span>` : ""}
           ${statusBadge(t.status)}
           <span class="badge badge-column">${escapeHtml(columnName(t.columnId))}</span>
           ${priorityBadge(t.priority)}
@@ -689,11 +696,16 @@ function bindDetailEvents(t, perms) {
 
   // Aceptar / Rechazar costo (vendedor creador) en "Cotización de envío lista".
   $("#tm-cost-accept")?.addEventListener("click", async () => {
+    const pedido = $("#tm-pedido")?.value.trim();
+    if (!pedido || !/^\d{1,10}$/.test(pedido)) {
+      toast("Captura el # de pedido (solo números) para aceptar el costo.", "error");
+      return;
+    }
     const btn = $("#tm-cost-accept");
     setSaving(btn, true);
     try {
-      await acceptShippingCost(t);
-      toast("Costo aceptado.", "success");
+      await acceptShippingCost(t, pedido);
+      toast("Costo aceptado. # de pedido asignado.", "success");
       closeModal("ticket-modal");
       closeDetailListeners();
     } catch (err) {
@@ -704,7 +716,7 @@ function bindDetailEvents(t, perms) {
   $("#tm-cost-reject")?.addEventListener("click", async () => {
     const ok = await confirmDialog({
       title: "Rechazar costo de envío",
-      message: `El pedido #${t.orderNumber} regresará a Cotización de envío para recotizar. ¿Continuar?`,
+      message: `El ticket #${mainOrderNumber(t)} regresará a Cotización de envío para recotizar. ¿Continuar?`,
       confirmText: "Rechazar", danger: true,
     });
     if (!ok) return;
@@ -795,7 +807,7 @@ function bindDetailEvents(t, perms) {
     $(btnId)?.addEventListener("click", async () => {
       const ok = await confirmDialog({
         title: `${label} ticket`,
-        message: `¿${label} el pedido #${t.orderNumber}?`,
+        message: `¿${label} el ticket #${mainOrderNumber(t)}?`,
         confirmText: label,
         danger,
       });
@@ -817,7 +829,7 @@ function bindDetailEvents(t, perms) {
   $("#tm-delete")?.addEventListener("click", async () => {
     const ok = await confirmDialog({
       title: "Eliminar ticket",
-      message: `¿Eliminar definitivamente el pedido #${t.orderNumber}? Esta acción no se puede deshacer.`,
+      message: `¿Eliminar definitivamente el ticket #${mainOrderNumber(t)}? Esta acción no se puede deshacer.`,
       confirmText: "Eliminar",
       danger: true,
     });

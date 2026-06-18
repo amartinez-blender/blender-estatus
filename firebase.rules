@@ -1,19 +1,8 @@
 rules_version = '2';
 
-// ============================================================
-// Blender Estatus — Reglas de Firestore
-// La seguridad REAL vive aquí: la UI solo oculta opciones.
-//
-// IMPORTANTE — mantener sincronizado con src/config.js:
-//   - dominio permitido (blendergroup.com)
-//   - lista de SuperAdmins (isConfiguredSuperAdmin)
-//   - rol por defecto ('pending')
-// ============================================================
-
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // ---------- Helpers ----------
     function isSignedIn() {
       return request.auth != null;
     }
@@ -23,7 +12,6 @@ service cloud.firestore {
         && request.auth.token.email.lower().matches('.*@blendergroup[.]com$');
     }
 
-    // Correos con rol SuperAdmin automático. Sincronizar con config.js.
     function isConfiguredSuperAdmin() {
       return request.auth.token.email.lower() in [
         'amartinez@blendergroup.com'
@@ -38,7 +26,6 @@ service cloud.firestore {
       return exists(/databases/$(database)/documents/users/$(request.auth.uid));
     }
 
-    // Usuario operativo: dominio correcto + registrado + activo.
     function isStaff() {
       return isDomainUser() && userExists() && userDoc().active == true;
     }
@@ -59,14 +46,9 @@ service cloud.firestore {
       return r in ['superadmin', 'sales_admin', 'sales_exec', 'production', 'warehouse', 'administration', 'auditor', 'pending'];
     }
 
-    // ---------- /users ----------
     match /users/{userId} {
-      // Todos los usuarios del dominio leen el directorio (avatares, menciones).
       allow read: if isDomainUser() && (userExists() || request.auth.uid == userId);
 
-      // Primer login: el usuario crea su propio perfil.
-      // Solo puede autoasignarse 'pending', o 'superadmin' si su correo
-      // está en la lista configurada.
       allow create: if isDomainUser()
         && request.auth.uid == userId
         && request.resource.data.uid == userId
@@ -78,8 +60,6 @@ service cloud.firestore {
           || (request.resource.data.role == 'superadmin' && isConfiguredSuperAdmin())
         );
 
-      // SuperAdmin: todo. El propio usuario: solo campos de perfil
-      // (nunca role ni active), salvo autopromoción configurada.
       allow update: if isSuper()
         || (
           isDomainUser()
@@ -94,14 +74,11 @@ service cloud.firestore {
       allow delete: if isSuper();
     }
 
-    // ---------- /columns ----------
     match /columns/{columnId} {
       allow read: if isStaff();
       allow create, update, delete: if isSuper();
     }
 
-    // ---------- /orderNumbers (unicidad de número de pedido) ----------
-    // create-only: si el doc existe, el número está ocupado.
     match /orderNumbers/{orderNumber} {
       allow read: if isStaff();
       allow create: if (isSuper() || hasRole('sales_admin') || hasRole('sales_exec'))
@@ -111,19 +88,14 @@ service cloud.firestore {
       allow delete: if isSuper();
     }
 
-    // Tickets que requieren cotización de envío.
     function isQuoteShipping(t) {
       return t.shippingType in ['Envío por cobrar', 'Envío pre-pagado'];
     }
 
-    // ---------- Helpers de tickets ----------
-    // Req. 6: cualquier usuario operativo ve todas las tarjetas (la edición se
-    // restringe por rol en las reglas de update de abajo).
     function canViewTicketData(t) {
       return isStaff() && role() != 'pending';
     }
 
-    // Puede comentar/adjuntar/operar (excluye auditor).
     function canOperateTicketData(t) {
       return isSuper()
         || hasRole('sales_admin')
@@ -148,59 +120,51 @@ service cloud.firestore {
         && (d.priority == null || d.priority in ['Baja', 'Media', 'Alta', 'Urgente'])
         && (!('tipoPago' in d) || d.tipoPago == null || d.tipoPago in ['Contado', 'Crédito'])
         && (!('paymentConfirmed' in d) || d.paymentConfirmed is bool)
+        && (!('pedidoNumber' in d) || d.pedidoNumber == null || d.pedidoNumber is string)
         && d.addressNA is bool
         && d.shippingAddress is string && d.shippingAddress.size() <= 500
         && (d.addressNA == true || d.shippingAddress.size() > 0);
     }
 
-    // ---------- /tickets ----------
     match /tickets/{ticketId} {
 
       function changedKeys() {
         return request.resource.data.diff(resource.data).affectedKeys();
       }
 
-      // Producción/Almacén solo mueven la tarjeta.
       function onlyMoveFields() {
         return changedKeys().hasOnly(['columnId', 'lastMovedAt', 'updatedAt']);
       }
 
-      // Contadores que se actualizan al comentar/adjuntar.
       function onlyCounterFields() {
         return changedKeys().hasOnly(['commentsCount', 'attachmentsCount', 'updatedAt']);
       }
 
-      // Producción asigna "Fecha y Hora en Almacén".
       function onlyProductionPromise() {
         return changedKeys().hasOnly(['promiseDateWarehouse', 'updatedAt']);
       }
 
-      // Almacén asigna "Fecha y Hora para Listo".
       function onlyWarehousePromise() {
         return changedKeys().hasOnly(['promiseDateReady', 'updatedAt']);
       }
 
-      // Almacén cotiza el envío (y la tarjeta se mueve sola a la columna lista).
       function onlyShippingCost() {
         return changedKeys().hasOnly(['shippingCost', 'costDecision', 'columnId', 'lastMovedAt', 'updatedAt'])
           || changedKeys().hasOnly(['shippingCost', 'costDecision', 'updatedAt']);
       }
 
-      // Vendedor creador acepta (por cobrar) / rechaza el costo.
       function onlyCostDecisionMove() {
-        return changedKeys().hasOnly(['costDecision', 'columnId', 'lastMovedAt', 'updatedAt']);
+        return changedKeys().hasOnly(['costDecision', 'pedidoNumber', 'columnId', 'lastMovedAt', 'updatedAt']);
       }
       function onlyAcceptFlag() {
-        return changedKeys().hasOnly(['costDecision', 'updatedAt']);
+        return changedKeys().hasOnly(['costDecision', 'pedidoNumber', 'updatedAt']);
       }
       function onlyRejectMove() {
         return changedKeys().hasOnly(['shippingCost', 'costDecision', 'shippingPaidByClient', 'columnId', 'lastMovedAt', 'updatedAt']);
       }
-      // Confirmar "Envío Pagado por el cliente" y mover por tratamiento.
       function onlyPaidMove() {
         return changedKeys().hasOnly(['shippingPaidByClient', 'columnId', 'lastMovedAt', 'updatedAt']);
       }
-      // Administración confirma el pago y la tarjeta avanza por tratamiento.
       function onlyConfirmPayment() {
         return changedKeys().hasOnly(['paymentConfirmed', 'columnId', 'lastMovedAt', 'updatedAt']);
       }
@@ -217,39 +181,30 @@ service cloud.firestore {
         && (
           isSuper()
           || hasRole('sales_admin')
-          // Ejecutivo: edita lo propio pero NO mueve de columna.
           || (
             hasRole('sales_exec')
             && (resource.data.ownerId == request.auth.uid || resource.data.createdBy == request.auth.uid)
             && request.resource.data.columnId == resource.data.columnId
           )
-          // Ejecutivo creador: aceptar/rechazar el costo (incluye mover de columna).
           || (
             hasRole('sales_exec') && resource.data.createdBy == request.auth.uid
             && (onlyCostDecisionMove() || onlyAcceptFlag() || onlyRejectMove())
           )
-          // Ejecutivo dueño: confirmar "Envío Pagado por el cliente" (mueve por tratamiento).
           || (
             hasRole('sales_exec') && resource.data.ownerId == request.auth.uid
             && onlyPaidMove()
           )
-          // Producción: mover sus tickets o asignar "Fecha y Hora en Almacén".
           || (hasRole('production') && resource.data.treatment == 'Fabricación'
               && (onlyMoveFields() || onlyProductionPromise()))
-          // Almacén: mover sus tickets o asignar "Fecha y Hora para Listo".
           || (hasRole('warehouse') && resource.data.treatment == 'Almacén'
               && (onlyMoveFields() || onlyWarehousePromise()))
-          // Almacén: cotizar el envío en tickets que lo requieren.
           || (hasRole('warehouse') && isQuoteShipping(resource.data) && onlyShippingCost())
-          // Administración: confirmar el pago (y avanzar por tratamiento).
           || (hasRole('administration') && onlyConfirmPayment())
-          // Contadores: cualquier usuario que puede operar el ticket.
           || (canOperateTicketData(resource.data) && onlyCounterFields())
         );
 
       allow delete: if isSuper();
 
-      // ---------- /tickets/{id}/comments ----------
       match /comments/{commentId} {
         allow read: if canViewTicketData(parentTicket(ticketId));
 
@@ -260,7 +215,6 @@ service cloud.firestore {
           && request.resource.data.text.size() <= 2000
           && request.resource.data.deleted == false;
 
-        // Editar / soft-delete: autor o SuperAdmin.
         allow update: if isSuper()
           || (
             resource.data.createdBy == request.auth.uid
@@ -271,7 +225,6 @@ service cloud.firestore {
         allow delete: if isSuper();
       }
 
-      // ---------- /tickets/{id}/attachments ----------
       match /attachments/{attachmentId} {
         allow read: if canViewTicketData(parentTicket(ticketId));
 
@@ -290,11 +243,9 @@ service cloud.firestore {
           );
       }
 
-      // ---------- /tickets/{id}/activity ----------
       match /activity/{activityId} {
         allow read: if canViewTicketData(parentTicket(ticketId));
 
-        // El historial lo escribe quien opera; es inmutable.
         allow create: if canOperateTicketData(parentTicket(ticketId))
           && request.resource.data.actorId == request.auth.uid;
 
@@ -302,24 +253,18 @@ service cloud.firestore {
       }
     }
 
-    // Query collection-group de actividad (dashboard).
-    // Solo roles con vista global.
     match /{path=**}/activity/{activityId} {
       allow read: if isSuper() || hasRole('sales_admin') || hasRole('auditor');
     }
 
-    // ---------- /notifications ----------
     match /notifications/{notificationId} {
-      // Cada quien lee solo lo suyo; el SuperAdmin puede leer todas (reinicio).
       allow read: if isSuper() || (isStaff() && resource.data.recipientId == request.auth.uid);
 
-      // Cualquier usuario operativo (no auditor) puede notificar a otros.
       allow create: if isStaff()
         && role() != 'auditor'
         && request.resource.data.read == false
         && request.resource.data.recipientId is string;
 
-      // Solo marcar como leída la propia.
       allow update: if isStaff()
         && resource.data.recipientId == request.auth.uid
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']);
@@ -327,27 +272,21 @@ service cloud.firestore {
       allow delete: if isSuper() || (isStaff() && resource.data.recipientId == request.auth.uid);
     }
 
-    // ---------- /slaBreaches (analítica histórica de atrasos) ----------
     match /slaBreaches/{breachId} {
-      // Lectura para cualquier usuario operativo (el Dashboard es visible para todos).
       allow read: if isStaff() && role() != 'pending';
-      // Cualquier usuario operativo registra atrasos; inmutables.
       allow create: if isStaff()
         && role() != 'auditor'
         && request.resource.data.actorId == request.auth.uid
         && request.resource.data.lateMs is number;
       allow update: if false;
-      // Solo SuperAdmin puede borrarlos (botón "Reestablecer gráficas").
       allow delete: if isSuper();
     }
 
-    // ---------- /settings ----------
     match /settings/{docId} {
       allow read: if isStaff();
       allow write: if isSuper();
     }
 
-    // Todo lo no declarado: denegado.
     match /{document=**} {
       allow read, write: if false;
     }

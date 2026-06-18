@@ -146,6 +146,17 @@ export function durationToMs(d) {
   return ((d?.hours || 0) * 60 + (d?.minutes || 0)) * 60000;
 }
 
+// Número principal de la tarjeta: el # de pedido si ya existe, si no el de cotización.
+// (orderNumber = # de cotización; pedidoNumber = # de pedido, se asigna al aceptar costo)
+export function mainOrderNumber(t) {
+  return (t && t.pedidoNumber) ? t.pedidoNumber : t?.orderNumber;
+}
+
+// Etiqueta principal: "Pedido: X" si ya hay # de pedido, si no "Cotización: X".
+export function orderRef(t) {
+  return (t && t.pedidoNumber) ? `Pedido: ${t.pedidoNumber}` : `Cotización: ${t?.orderNumber}`;
+}
+
 // ===================== Varios =====================
 export function initials(name) {
   return String(name || "?")
@@ -179,9 +190,9 @@ export function validateOrderNumber(value) {
 // Devuelve un array de mensajes de error; vacío = válido.
 export function validateTicketData(data) {
   const errors = [];
-  if (!data.orderNumber) errors.push("El número de pedido es obligatorio.");
+  if (!data.orderNumber) errors.push("El número de cotización es obligatorio.");
   else if (!validateOrderNumber(data.orderNumber))
-    errors.push("El número de pedido debe ser solo numérico, máximo 5 dígitos.");
+    errors.push("El número de cotización debe ser solo numérico, máximo 5 dígitos.");
   if (!TREATMENTS.includes(data.treatment)) errors.push("Selecciona el tratamiento del pedido.");
   if (!SHIPPING_TYPES.includes(data.shippingType)) errors.push("Selecciona el tipo de envío.");
   if (!DELIVERY_MODES.includes(data.deliveryMode)) errors.push("Selecciona la modalidad de entrega.");

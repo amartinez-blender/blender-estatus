@@ -669,6 +669,9 @@ textarea.input { resize: vertical; }
 }
 .sla-inputs .input-sm { width: 90px; }
 
+/* Tag secundario del # de cotización cuando ya hay # de pedido */
+.tag-cot { font-size: 0.62rem; opacity: 0.85; }
+
 /* Chip de costo de envío en la tarjeta */
 .card-cost {
   background: var(--color-black); color: var(--color-yellow);

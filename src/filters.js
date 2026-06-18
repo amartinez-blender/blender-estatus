@@ -8,10 +8,10 @@ import { ROLES } from "./roles.js";
 import { sellableUsers } from "./users.js";
 import { avatarHtml } from "./ui.js";
 
-// Preselección inicial según rol: un Ejecutivo de Ventas ve solo lo suyo.
-export function initVendorFilter(user) {
-  if (user?.role === ROLES.SALES_EXEC) store.vendorFilter = [user.uid];
-  else store.vendorFilter = [];
+// Por defecto el filtro muestra TODOS los vendedores (req. 6: todos ven todas
+// las tarjetas). Cada usuario puede luego filtrar por uno o varios vendedores.
+export function initVendorFilter() {
+  store.vendorFilter = [];
 }
 
 // ¿El ticket pasa el filtro de vendedor activo?
@@ -71,8 +71,6 @@ export function renderVendorFilter(host, onChange) {
 function buildVendorPanel(host, panel, onChange) {
   const sellers = sellableUsers();
   const sel = store.vendorFilter || [];
-  console.info("[vfilter] usuarios:", store.users.length, "vendedores:", sellers.length,
-    sellers.map((u) => `${u.displayName}:${u.role}`));
 
   panel.innerHTML = `
     <label class="vfilter-opt vfilter-all">

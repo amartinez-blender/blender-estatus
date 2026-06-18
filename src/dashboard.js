@@ -1,6 +1,6 @@
 // dashboard.js — Métricas y actividad reciente, con filtros en cliente.
 
-import { store, $, $$, escapeHtml, toDate, relativeTime, daysSince, fmtCountdown,
+import { store, $, $$, escapeHtml, toDate, relativeTime, daysSince, fmtCountdown, mainOrderNumber,
   TREATMENTS, SHIPPING_TYPES, DELIVERY_MODES, TICKET_STATUSES } from "./utils.js";
 import { visibleTickets, can } from "./permissions.js";
 import { activeColumns, columnName } from "./columns.js";
@@ -267,7 +267,7 @@ function renderMetrics() {
         <h4>Tickets sin movimiento por más de ${staleDays} días</h4>
         <ul class="activity-list">
           ${stale.slice(0, 10).map((t) => `
-            <li><span>#${escapeHtml(t.orderNumber)} · ${escapeHtml(columnName(t.columnId))} · ${escapeHtml(userName(t.ownerId))}</span>
+            <li><span>#${escapeHtml(mainOrderNumber(t))} · ${escapeHtml(columnName(t.columnId))} · ${escapeHtml(userName(t.ownerId))}</span>
             <time>${relativeTime(t.lastMovedAt)}</time></li>`).join("")}
         </ul>
       </div>` : ""}`;
