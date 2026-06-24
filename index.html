@@ -18,6 +18,53 @@
 </head>
 <body>
 
+  <!-- ============ Fondo animado (topográfico + coordenadas + destellos) ============ -->
+  <div id="bg-topo" aria-hidden="true">
+    <svg viewBox="0 0 1440 900" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg">
+      <g class="topo-layer topo-a">
+        <path d="M-120 120 C 220 60, 430 200, 720 140 S 1240 60, 1580 150"/>
+        <path d="M-120 200 C 240 140, 450 280, 740 220 S 1260 150, 1580 230"/>
+        <path d="M-120 300 C 200 250, 470 380, 760 320 S 1280 250, 1580 330"/>
+        <path d="M-120 430 C 260 370, 430 520, 720 450 S 1300 380, 1580 470"/>
+        <path d="M-120 560 C 220 500, 470 650, 760 580 S 1280 520, 1580 600"/>
+        <path d="M-120 690 C 240 640, 440 800, 740 720 S 1300 650, 1580 740"/>
+        <path d="M-120 820 C 220 770, 470 920, 760 850 S 1280 790, 1580 870"/>
+        <!-- "isla" topográfica (curvas concéntricas) -->
+        <path d="M1040 360 C 1140 330, 1230 410, 1190 500 C 1150 590, 1010 600, 950 520 C 900 450, 940 390, 1040 360 Z"/>
+        <path d="M1055 395 C 1125 375, 1190 430, 1162 495 C 1134 560, 1035 568, 992 510 C 957 460, 985 415, 1055 395 Z"/>
+        <path d="M1070 430 C 1115 418, 1155 452, 1138 492 C 1121 532, 1058 537, 1031 500 C 1009 467, 1025 442, 1070 430 Z"/>
+      </g>
+      <g class="topo-layer topo-b">
+        <path d="M-120 60 C 260 10, 440 150, 760 90 S 1300 10, 1580 100"/>
+        <path d="M-120 360 C 220 300, 470 450, 760 380 S 1280 310, 1580 400"/>
+        <path d="M-120 620 C 260 560, 430 720, 720 650 S 1300 580, 1580 670"/>
+        <!-- isla pequeña -->
+        <path d="M300 600 C 360 580, 415 620, 395 675 C 375 730, 290 735, 255 690 C 228 654, 240 620, 300 600 Z"/>
+        <path d="M315 632 C 355 620, 388 645, 374 680 C 360 715, 305 718, 283 690 C 266 666, 275 644, 315 632 Z"/>
+        <!-- coordenadas -->
+        <g class="coord" transform="translate(360 230)">
+          <line x1="-7" y1="0" x2="7" y2="0"/><line x1="0" y1="-7" x2="0" y2="7"/>
+          <text x="12" y="4">19.4326, -99.1332</text>
+        </g>
+        <g class="coord" transform="translate(980 700)">
+          <line x1="-7" y1="0" x2="7" y2="0"/><line x1="0" y1="-7" x2="0" y2="7"/>
+          <text x="12" y="4">25.6866, -100.3161</text>
+        </g>
+        <g class="coord" transform="translate(700 460)">
+          <line x1="-7" y1="0" x2="7" y2="0"/><line x1="0" y1="-7" x2="0" y2="7"/>
+          <text x="12" y="4">20.6597, -103.3496</text>
+        </g>
+        <!-- destellos -->
+        <circle class="glint" cx="430" cy="170" r="1.8"/>
+        <circle class="glint" cx="1180" cy="300" r="1.6"/>
+        <circle class="glint" cx="250" cy="540" r="1.7"/>
+        <circle class="glint" cx="900" cy="240" r="1.5"/>
+        <circle class="glint" cx="1080" cy="620" r="1.8"/>
+        <circle class="glint" cx="600" cy="780" r="1.6"/>
+      </g>
+    </svg>
+  </div>
+
   <!-- ============ Pantalla: cargando ============ -->
   <div id="screen-loading" class="screen">
     <div class="screen-card">

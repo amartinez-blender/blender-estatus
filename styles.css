@@ -72,7 +72,7 @@ code { background: var(--color-border); padding: 1px 6px; border-radius: 6px; fo
 /* ============ Pantallas completas ============ */
 .screen {
   min-height: 100dvh; display: flex; align-items: center; justify-content: center;
-  padding: 24px; background: var(--color-bg);
+  padding: 24px; background: transparent; /* deja ver el fondo animado */
 }
 .screen-card {
   background: var(--color-surface); border-radius: var(--radius-lg);
@@ -205,7 +205,7 @@ textarea.input { resize: vertical; }
 .notif-body time { color: var(--color-text-muted); font-size: 0.72rem; }
 
 /* ============ Layout principal ============ */
-.app-main { padding: 16px 14px 40px; max-width: 1500px; margin: 0 auto; }
+.app-main { padding: 16px 14px 40px; width: 95%; max-width: 95%; margin: 0 auto; }
 .view-toolbar {
   display: flex; align-items: center; justify-content: space-between;
   gap: 12px; margin-bottom: 16px; flex-wrap: wrap;
@@ -775,4 +775,42 @@ html[data-theme="dark"] .app-header .logo-dark { display: block; }
 
 @media (min-width: 720px) {
   .sla-row { flex-direction: row; align-items: center; justify-content: space-between; }
+}
+
+/* ============================================================
+   FONDO ANIMADO — líneas topográficas + coordenadas + destellos
+   Sutil, gris oscuro, movimiento lento e infinito.
+   ============================================================ */
+#bg-topo {
+  position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden;
+  color: rgba(29, 29, 27, 0.07); /* color base de las líneas (modo claro) */
+}
+html[data-theme="dark"] #bg-topo { color: rgba(190, 196, 208, 0.06); }
+#bg-topo svg { width: 100%; height: 100%; display: block; }
+#bg-topo path { fill: none; stroke: currentColor; stroke-width: 1; vector-effect: non-scaling-stroke; }
+#bg-topo .coord line { stroke: currentColor; stroke-width: 1; }
+#bg-topo .coord text { fill: currentColor; font: 10px ui-monospace, "SFMono-Regular", Menlo, monospace; opacity: 0.85; }
+#bg-topo .glint {
+  fill: var(--color-yellow);
+  filter: drop-shadow(0 0 3px var(--color-yellow));
+  opacity: 0;
+  animation: topoGlint 6s ease-in-out infinite;
+}
+#bg-topo .glint:nth-of-type(2) { animation-delay: 1.2s; }
+#bg-topo .glint:nth-of-type(3) { animation-delay: 2.4s; }
+#bg-topo .glint:nth-of-type(4) { animation-delay: 3.6s; }
+#bg-topo .glint:nth-of-type(5) { animation-delay: 4.8s; }
+#bg-topo .glint:nth-of-type(6) { animation-delay: 0.6s; }
+
+.topo-a { animation: topoDriftA 90s ease-in-out infinite alternate; }
+.topo-b { animation: topoDriftB 110s ease-in-out infinite alternate; }
+@keyframes topoDriftA { from { transform: translate(0, 0); } to { transform: translate(-42px, -28px); } }
+@keyframes topoDriftB { from { transform: translate(0, 0); } to { transform: translate(48px, 24px); } }
+@keyframes topoGlint { 0%, 100% { opacity: 0; } 50% { opacity: 0.9; } }
+
+/* El contenido va por encima del fondo. */
+#app, .screen { position: relative; z-index: 1; }
+
+@media (prefers-reduced-motion: reduce) {
+  .topo-a, .topo-b, #bg-topo .glint { animation: none; }
 }
