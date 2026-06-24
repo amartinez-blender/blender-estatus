@@ -1,7 +1,7 @@
 // app.js — Punto de entrada: configuración, auth, router y orquestación de vistas.
 
 import { initFirebase } from "./firebase.js";
-import { store, on, emit, $, $$, escapeHtml } from "./utils.js";
+import { store, on, emit, $, $$, escapeHtml, debounce } from "./utils.js";
 import { initAuth, login, logout } from "./auth.js";
 import { ROLES, roleLabel } from "./roles.js";
 import { can } from "./permissions.js";
@@ -13,13 +13,42 @@ import { renderBoard, openTicketModal, openTicketForm } from "./board.js";
 import { renderDashboard } from "./dashboard.js";
 import { initVendorFilter } from "./filters.js";
 import { ensureSeed, createDemoData, resetAllData } from "./seed.js";
-import { listenSettings, getSla, saveSlaSettings } from "./settings.js";
+import { listenSettings, getSla, saveSlaSettings, getPermissionOverrides, savePermissionOverrides } from "./settings.js";
+import { ASSIGNABLE_ROLES } from "./roles.js";
 import { toast, openModal, closeModal, bindModalDismiss, avatarHtml } from "./ui.js";
 
 let currentView = "board";
 let appStarted = false;
 let lastRole = null;
 let slaTimer = null;
+
+// Matriz de permisos para el resumen editable del Admin (req. 7).
+// Capacidades mostradas y qué roles las tienen por defecto.
+const PERM_CAPS = [
+  ["ticket:create", "Crear tickets"],
+  ["ticket:edit", "Editar tickets"],
+  ["ticket:move", "Mover tarjetas"],
+  ["ticket:cancel", "Cancelar / Cerrar"],
+  ["comment:create", "Comentar"],
+  ["attachment:add", "Adjuntar archivos"],
+  ["ticket:setShippingCost", "Cotizar envío (costo)"],
+  ["ticket:decideCost", "Aceptar / Retroalimentar costo"],
+  ["ticket:markPaid", "Confirmar pago del cliente"],
+  ["ticket:confirmPayment", "Confirmar pago (Admin)"],
+  ["ticket:setPedido", "Agregar # de pedido"],
+  ["ticket:setProductionPromise", "Fecha/Hora en Almacén"],
+  ["ticket:setWarehousePromise", "Fecha/Hora para Listo"],
+  ["dashboard:view", "Ver Dashboard"],
+  ["admin:view", "Ver Admin"],
+];
+const PERM_DEFAULTS = {
+  sales_admin: ["ticket:create", "ticket:edit", "ticket:move", "ticket:cancel", "comment:create", "attachment:add", "ticket:decideCost", "ticket:markPaid", "ticket:confirmPayment", "ticket:setPedido", "dashboard:view", "admin:view"],
+  sales_exec: ["ticket:create", "ticket:edit", "ticket:cancel", "comment:create", "attachment:add", "ticket:decideCost", "ticket:markPaid", "ticket:setPedido", "dashboard:view"],
+  production: ["ticket:move", "comment:create", "attachment:add", "ticket:setProductionPromise", "dashboard:view"],
+  warehouse: ["ticket:move", "comment:create", "attachment:add", "ticket:setShippingCost", "ticket:setWarehousePromise", "dashboard:view"],
+  administration: ["comment:create", "attachment:add", "ticket:confirmPayment", "dashboard:view"],
+  auditor: ["dashboard:view"],
+};
 
 // ============================================================
 // Arranque
@@ -220,6 +249,29 @@ function renderAdmin() {
   else renderSettingsAdmin(container);
 }
 
+// Construye la matriz de permisos por rol (resumen + toggles).
+function permMatrixHtml() {
+  const ov = getPermissionOverrides();
+  const capLabel = Object.fromEntries(PERM_CAPS);
+  const roles = ASSIGNABLE_ROLES.filter((r) => r !== ROLES.SUPERADMIN && r !== ROLES.PENDING);
+  return roles.map((role) => {
+    const caps = PERM_DEFAULTS[role] || [];
+    return `
+      <div class="perm-role">
+        <strong>${escapeHtml(roleLabel(role))}</strong>
+        <div class="perm-caps">
+          ${caps.length ? caps.map((cap) => {
+            const on = !(ov[role] && ov[role][cap] === false);
+            return `<label class="chip-check">
+              <input type="checkbox" class="perm-check" data-role="${role}" data-cap="${cap}" ${on ? "checked" : ""}>
+              <span>${escapeHtml(capLabel[cap] || cap)}</span>
+            </label>`;
+          }).join("") : `<span class="text-muted">Solo lectura</span>`}
+        </div>
+      </div>`;
+  }).join("");
+}
+
 function renderSettingsAdmin(container) {
   const cfg = store.config.app;
   const sla = getSla();
@@ -273,11 +325,39 @@ function renderSettingsAdmin(container) {
       ${cfg.demoMode ? `<button class="btn btn-ghost" id="btn-demo-data">Generar datos demo</button>` : ""}
     </div>
 
+    <div class="dash-card">
+      <h4>Permisos por rol</h4>
+      <p class="text-muted">Resumen de lo que puede hacer cada rol. Puedes apagar capacidades (no se pueden encender más allá de lo permitido por el rol; las reglas del servidor son la verdad).</p>
+      <div class="perm-matrix">
+        ${permMatrixHtml()}
+      </div>
+      <button class="btn btn-primary" id="btn-save-perms">Guardar permisos</button>
+    </div>
+
     <div class="dash-card danger-card">
       <h4>Zona de peligro</h4>
       <p class="text-muted">Borra todos los tickets, números de pedido, histórico de atrasos y notificaciones. Conserva usuarios, columnas y configuración. No se puede deshacer.</p>
       <button class="btn btn-danger" id="btn-reset-all">Reestablecer todos los datos</button>
     </div>`;
+
+  $("#btn-save-perms")?.addEventListener("click", async (e) => {
+    e.target.disabled = true;
+    try {
+      const overrides = {};
+      $$("#admin-content .perm-check").forEach((cb) => {
+        if (!cb.checked) {
+          const { role, cap } = cb.dataset;
+          (overrides[role] = overrides[role] || {})[cap] = false;
+        }
+      });
+      await savePermissionOverrides(overrides);
+      toast("Permisos guardados.", "success");
+    } catch (err) {
+      toast("No se pudieron guardar: " + err.message, "error");
+    } finally {
+      e.target.disabled = false;
+    }
+  });
 
   $("#btn-reset-all")?.addEventListener("click", async (e) => {
     const ok = await confirmDialog({
@@ -410,9 +490,10 @@ function bindStaticEvents() {
   // Nuevo ticket
   $("#btn-new-ticket").addEventListener("click", () => openTicketForm());
 
-  // Filtros del tablero (estado y estatus de tarea SLA)
+  // Filtros del tablero (estado, estatus de tarea SLA y búsqueda por número)
   $("#board-status-filter").addEventListener("change", renderBoard);
   $("#board-sla-filter").addEventListener("change", renderBoard);
+  $("#board-search")?.addEventListener("input", debounce(renderBoard, 200));
 
   // Notificaciones
   $("#btn-notifications").addEventListener("click", (e) => {

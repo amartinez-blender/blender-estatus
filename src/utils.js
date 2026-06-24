@@ -4,7 +4,10 @@
 export const TREATMENTS = ["Fabricación", "Almacén"];
 export const SHIPPING_TYPES = ["Recolección", "Envío por cobrar", "Envío pre-pagado"];
 export const DELIVERY_MODES = ["Domicilio", "Ocurre", "Recolección"];
-export const PAYMENT_TYPES = ["Contado", "Crédito"];
+// Modalidades válidas cuando NO es Recolección (req. 9: sin "Recolección").
+export const DELIVERY_MODES_SHIPPING = ["Domicilio", "Ocurre"];
+export const PAYMENT_TYPES = ["Contado", "Crédito"];      // Tipo de pago (lo fija el Ejecutivo al crear)
+export const PAYMENT_METHODS = ["Transferencia", "Crédito"]; // Forma de pago (la fija Administración al confirmar)
 
 // Tipos de envío que envían el ticket a la columna de cotización.
 export const QUOTE_SHIPPING_TYPES = ["Envío por cobrar", "Envío pre-pagado"];
@@ -16,6 +19,7 @@ export const ROUTING_COLUMN_NAMES = {
   COTIZACION: "Cotización de envío",
   COTIZACION_LISTA: "Cotización de envío lista",
   ADMINISTRACION: "Administración",
+  AGREGAR_PEDIDO: "Agregar Pedido",
 };
 
 // Formatea un monto a moneda mexicana: "$1,234.50 MXN".
@@ -33,6 +37,7 @@ export const DEFAULT_COLUMNS = [
   "Cotización de envío",
   "Cotización de envío lista",
   "Administración",
+  "Agregar Pedido",
   "Fabricación",
   "Almacén",
   "Listos para recolección",

@@ -75,12 +75,6 @@ export async function createTicket(data) {
   const user = store.currentUser;
   const errors = validateTicketData(data);
   if (errors.length) throw new Error(errors[0]);
-  // En Recolección el # de pedido es obligatorio desde la creación (no pasa por
-  // "Aceptar costo"). En los demás tipos se asigna luego al aceptar el costo.
-  const isRecoleccion = normalize(data.shippingType) === normalize("Recolección");
-  if (isRecoleccion && !/^\d{1,10}$/.test(String(data.pedidoNumber || "").trim())) {
-    throw new Error("El # de pedido es obligatorio para Recolección.");
-  }
   if (await isOrderNumberTaken(data.orderNumber)) {
     throw new Error(`La cotización ${data.orderNumber} ya existe.`);
   }
@@ -110,7 +104,8 @@ export async function createTicket(data) {
     promiseDateWarehouse: null, // "Fecha y Hora en Almacén" (lo asigna Producción)
     promiseDateReady: null,     // "Fecha y Hora para Listo" (lo asigna Almacén)
     shippingCost: null,         // Costo de envío en MXN (se llena en Cotización)
-    pedidoNumber: data.pedidoNumber ? String(data.pedidoNumber).trim() : null, // # de pedido
+    pedidoNumber: null,         // # de pedido (se captura en la columna "Agregar Pedido")
+    paymentMethod: null,        // Forma de pago que confirma Administración (Transferencia/Crédito)
     costDecision: null,         // null | "accepted" | "rejected" (decide el creador)
     shippingPaidByClient: false,// pre-pagado: el cliente ya pagó el envío
     commentsCount: 0,
@@ -342,25 +337,49 @@ function roleMentions(role) {
     .join(" ");
 }
 
-// Notifica por rol cuando un ticket entra a una columna (reqs. 1, 3, 7, 8).
-// Avisa en la campana (in-app) Y por Google Chat al espacio configurado.
+// Notifica cuando un ticket entra a una columna (in-app + Google Chat).
+// Para columnas de equipos (Producción/Almacén/Administración) avisa a TODO el rol.
+// Para etapas del Ejecutivo ("Agregar Pedido", "Listos") avisa SOLO al vendedor
+// asignado al ticket (req. 10), no a todos los ejecutivos.
 async function notifyColumnEntry(ticket, colNameStr) {
   const c = normalize(colNameStr);
-  let role = null, icon = "🔔", type = "moved";
-  if (c === normalize("Fabricación")) { role = ROLES.PRODUCTION; icon = "🏭"; type = "production_in"; }
-  else if (c === normalize("Almacén") || c === normalize("Cotización de envío")) { role = ROLES.WAREHOUSE; icon = "📦"; type = "warehouse_in"; }
-  else if (c === normalize("Administración")) { role = ROLES.ADMINISTRATION; icon = "🧾"; type = "updated"; }
-  else if (c === normalize("Listos para recolección")) { role = ROLES.SALES_EXEC; icon = "✅"; type = "moved"; }
-  if (!role) return;
+  let roles = [], icon = "🔔", type = "moved", ownerOnly = false;
+  if (c === normalize("Fabricación")) { roles = [ROLES.PRODUCTION]; icon = "🏭"; type = "production_in"; }
+  else if (c === normalize("Almacén") || c === normalize("Cotización de envío")) { roles = [ROLES.WAREHOUSE]; icon = "📦"; type = "warehouse_in"; }
+  // Administración: avisa al rol Administración Y al Administrador de Ventas (ambos confirman pago).
+  else if (c === normalize("Administración")) { roles = [ROLES.ADMINISTRATION, ROLES.SALES_ADMIN]; icon = "🧾"; type = "updated"; }
+  else if (c === normalize("Agregar Pedido")) { ownerOnly = true; icon = "🔢"; type = "updated"; }
+  else if (c === normalize("Listos para recolección")) { ownerOnly = true; icon = "✅"; type = "moved"; }
+  else return;
 
-  await notifyRole(role, {
-    ticketId: ticket.id, type,
-    title: orderRef(ticket),
-    message: `Entró a ${colNameStr}.`,
-  });
+  if (ownerOnly) {
+    // Solo el Ejecutivo que CREÓ y/o está ASIGNADO al ticket (no todo el rol).
+    const targets = [...new Set([ticket.ownerId, ticket.createdBy].filter(Boolean))];
+    await notifyUsers(targets, {
+      ticketId: ticket.id, type,
+      title: orderRef(ticket),
+      message: `Entró a ${colNameStr}.`,
+    });
+    const mention = targets
+      .map((uid) => {
+        const u = store.users.find((x) => (x.uid || x.id) === uid);
+        return u?.chatUserId ? `<users/${u.chatUserId}>` : `@${u?.displayName || userName(uid)}`;
+      })
+      .join(" ");
+    await sendGoogleChat(`${icon} *${orderRef(ticket)}* entró a *${colNameStr}*. ${mention}`.trim());
+    return;
+  }
 
+  for (const role of roles) {
+    await notifyRole(role, {
+      ticketId: ticket.id, type,
+      title: orderRef(ticket),
+      message: `Entró a ${colNameStr}.`,
+    });
+  }
+  const mentions = [...new Set(roles.flatMap((role) => roleMentions(role).split(" ")))].join(" ");
   await sendGoogleChat(
-    `${icon} *${orderRef(ticket)}* entró a *${colNameStr}*. ${roleMentions(role)}`.trim()
+    `${icon} *${orderRef(ticket)}* entró a *${colNameStr}*. ${mentions}`.trim()
   );
 }
 
@@ -385,28 +404,23 @@ function recordBreach(ticket, phase, lateMs) {
 
 const isPrepaid = (t) => normalize(t.shippingType) === normalize("Envío pre-pagado");
 
-// El vendedor creador ACEPTA el costo. Al aceptar SIEMPRE captura el # de pedido,
-// que a partir de aquí es el dato principal (se conserva el # de cotización).
+// El vendedor creador ACEPTA el costo.
 //  - "Envío por cobrar": pasa a Administración.
 //  - "Envío pre-pagado": queda aceptada; avanza al confirmar el pago del cliente.
-export async function acceptShippingCost(ticket, pedidoNumber) {
+// El # de pedido NO se captura aquí, sino en la columna "Agregar Pedido".
+export async function acceptShippingCost(ticket) {
   const user = store.currentUser;
-  const pedido = String(pedidoNumber || "").trim();
-  if (!/^\d{1,10}$/.test(pedido)) {
-    throw new Error("Captura un # de pedido válido (solo números).");
-  }
 
   if (isPrepaid(ticket)) {
     await updateDoc(doc(fb.db, "tickets", ticket.id), {
       costDecision: "accepted",
-      pedidoNumber: pedido,
       updatedAt: serverTimestamp(),
     });
     await logActivity(ticket.id, "updated",
-      `${user.displayName} aceptó el costo y asignó el # de pedido ${pedido}. Falta confirmar "Envío Pagado por el cliente".`);
+      `${user.displayName} aceptó el costo de envío. Falta confirmar "Envío Pagado por el cliente".`);
     await notifyUsers([ticket.ownerId], {
       ticketId: ticket.id, type: "updated",
-      title: orderRef({ pedidoNumber: pedido }),
+      title: orderRef(ticket),
       message: "Costo aceptado. Marca 'Envío Pagado por el cliente' para continuar.",
     });
     return;
@@ -414,17 +428,17 @@ export async function acceptShippingCost(ticket, pedidoNumber) {
 
   // Envío por cobrar → pasa a Administración.
   const target = findColumnByName(ROUTING_COLUMN_NAMES.ADMINISTRACION);
-  const updates = { costDecision: "accepted", pedidoNumber: pedido, updatedAt: serverTimestamp() };
+  const updates = { costDecision: "accepted", updatedAt: serverTimestamp() };
   if (target) { updates.columnId = target.id; updates.lastMovedAt = serverTimestamp(); }
   await updateDoc(doc(fb.db, "tickets", ticket.id), updates);
   await logActivity(ticket.id, "updated",
-    `${user.displayName} aceptó el costo y asignó el # de pedido ${pedido}.${target ? ` Pasó a ${target.name}.` : ""}`);
+    `${user.displayName} aceptó el costo de envío.${target ? ` Pasó a ${target.name}.` : ""}`);
   if (target) {
     await notifyUsers([ticket.ownerId], {
       ticketId: ticket.id, type: "moved",
-      title: `Pedido ${pedido}`, message: `Pasó a ${target.name}.`,
+      title: orderRef(ticket), message: `Pasó a ${target.name}.`,
     });
-    await notifyColumnEntry({ ...ticket, pedidoNumber: pedido }, target.name);
+    await notifyColumnEntry(ticket, target.name);
   }
 }
 
@@ -477,38 +491,60 @@ export async function rejectShippingCost(ticket) {
   );
 }
 
-// Administración marca "Pago Confirmado": la tarjeta avanza a Fabricación o
-// Almacén según el Tratamiento, y se avisa al Ejecutivo de Ventas (reqs. 8, 9).
-export async function confirmPayment(ticket) {
+// Administración marca "Pago Confirmado" y la forma de pago (Transferencia/Crédito).
+// La tarjeta avanza a la columna "Agregar Pedido" para que el Ejecutivo capture
+// el # de pedido. Se avisa al Ejecutivo de Ventas asignado (reqs. 3, 5, 8).
+export async function confirmPayment(ticket, paymentMethod) {
   const user = store.currentUser;
+  const method = String(paymentMethod || "").trim();
+  if (!["Transferencia", "Crédito"].includes(method)) {
+    throw new Error("Selecciona el tipo de pago (Transferencia o Crédito).");
+  }
 
   // Atraso (en tiempo hábil) si se confirmó fuera del SLA de Administración.
   const entered = toDate(ticket.lastMovedAt)?.getTime() ?? Date.now();
   const deadline = addBusinessMs(entered, durationToMs(getSla().admin)).getTime();
   recordBreach(ticket, "Confirmar Pago", businessMsBetween(deadline, Date.now()));
 
-  const target = findColumnByName(ticket.treatment); // "Fabricación" o "Almacén"
-  const updates = { paymentConfirmed: true, updatedAt: serverTimestamp() };
+  const target = findColumnByName(ROUTING_COLUMN_NAMES.AGREGAR_PEDIDO);
+  const updates = { paymentConfirmed: true, paymentMethod: method, updatedAt: serverTimestamp() };
   if (target) { updates.columnId = target.id; updates.lastMovedAt = serverTimestamp(); }
   await updateDoc(doc(fb.db, "tickets", ticket.id), updates);
 
   await logActivity(ticket.id, "updated",
-    `${user.displayName} confirmó el pago.${target ? ` Pasó a ${target.name}.` : ""}`);
+    `${user.displayName} confirmó el pago (${method}).${target ? ` Pasó a ${target.name}.` : ""}`);
 
-  // Aviso al Ejecutivo de Ventas asignado (req. 8).
+  // Aviso al Ejecutivo de Ventas asignado: debe capturar el # de pedido.
   await notifyUsers([ticket.ownerId], {
     ticketId: ticket.id, type: "updated",
     title: orderRef(ticket),
-    message: `Pago Confirmado.${target ? ` El pedido avanzó a ${target.name}.` : ""}`,
+    message: `Pago Confirmado (${method}). Captura el # de pedido en "Agregar Pedido".`,
   });
-  const owner = store.users.find((u) => (u.uid || u.id) === ticket.ownerId);
-  const mention = owner?.chatUserId
-    ? `<users/${owner.chatUserId}>`
-    : `@${owner?.displayName || userName(ticket.ownerId)}`;
-  await sendGoogleChat(`✅ *${orderRef(ticket)}* — Pago Confirmado. ${mention}`.trim());
-
-  // Aviso al equipo de la columna destino (Producción/Almacén).
   if (target) await notifyColumnEntry(ticket, target.name);
+}
+
+// El Ejecutivo de Ventas captura el # de pedido en la columna "Agregar Pedido".
+// Al guardarlo, la tarjeta avanza a Fabricación o Almacén según el Tratamiento.
+export async function addPedido(ticket, pedidoNumber) {
+  const user = store.currentUser;
+  const pedido = String(pedidoNumber || "").trim();
+  if (!/^\d{1,10}$/.test(pedido)) {
+    throw new Error("Captura un # de pedido válido (solo números).");
+  }
+  const target = findColumnByName(ticket.treatment); // "Fabricación" o "Almacén"
+  const updates = { pedidoNumber: pedido, updatedAt: serverTimestamp() };
+  if (target) { updates.columnId = target.id; updates.lastMovedAt = serverTimestamp(); }
+  await updateDoc(doc(fb.db, "tickets", ticket.id), updates);
+
+  await logActivity(ticket.id, "updated",
+    `${user.displayName} asignó el # de pedido ${pedido}.${target ? ` Pasó a ${target.name}.` : ""}`);
+
+  const moved = { ...ticket, pedidoNumber: pedido };
+  await notifyUsers([ticket.ownerId], {
+    ticketId: ticket.id, type: "moved",
+    title: orderRef(moved), message: target ? `Pasó a ${target.name}.` : "# de pedido asignado.",
+  });
+  if (target) await notifyColumnEntry(moved, target.name);
 }
 
 // Solo SuperAdmin (reforzado en rules). Libera el número de pedido.

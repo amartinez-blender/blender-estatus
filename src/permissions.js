@@ -6,7 +6,15 @@
 // Estas mismas reglas están reflejadas en firebase.rules.
 
 import { ROLES, ROLE_TREATMENT } from "./roles.js";
-import { normalize } from "./utils.js";
+import { normalize, store } from "./utils.js";
+
+// Override del SuperAdmin (matriz de permisos en Admin): si una capacidad está
+// explícitamente apagada para un rol, se niega. No puede CONCEDER más allá de lo
+// que ya permite el rol por defecto (las reglas del servidor son la verdad).
+function isDisabledByAdmin(role, action) {
+  const ov = store.settings?.permissions;
+  return !!(ov && ov[role] && ov[role][action] === false);
+}
 
 function ownsTicket(user, ticket) {
   return !!ticket && (ticket.ownerId === user.uid || ticket.createdBy === user.uid);
@@ -27,6 +35,9 @@ export function can(user, action, resource = null) {
   if (!user || user.active === false || user.role === ROLES.PENDING) return false;
   const r = user.role;
   if (r === ROLES.SUPERADMIN) return true;
+
+  // Apagado explícito por el SuperAdmin (matriz de permisos).
+  if (isDisabledByAdmin(r, action)) return false;
 
   switch (action) {
     // ---------- Tickets ----------
@@ -63,13 +74,14 @@ export function can(user, action, resource = null) {
       if (r === ROLES.SALES_EXEC) return ownsTicket(user, resource);
       return false;
 
-    // Fecha y Hora en Almacén → solo Producción (en tickets de Fabricación).
+    // Fecha y Hora en Almacén → Producción, según la COLUMNA Fabricación.
     case "ticket:setProductionPromise":
-      return r === ROLES.PRODUCTION && treatmentMatches(user, resource);
+      return r === ROLES.PRODUCTION && colMatches(resource, "Fabricación");
 
-    // Fecha y Hora para Listo → solo Almacén (en tickets de Almacén).
+    // Fecha y Hora para Listo → Almacén, según la COLUMNA Almacén
+    // (independiente del tratamiento del pedido).
     case "ticket:setWarehousePromise":
-      return r === ROLES.WAREHOUSE && treatmentMatches(user, resource);
+      return r === ROLES.WAREHOUSE && colMatches(resource, "Almacén");
 
     // Costo de envío → solo Almacén. Al guardarlo la tarjeta se mueve sola a
     // "Cotización de envío lista" (las reglas permiten ese movimiento a Almacén
@@ -81,9 +93,16 @@ export function can(user, action, resource = null) {
     case "ticket:setPaymentType":
       return r === ROLES.SALES_EXEC && ownsTicket(user, resource);
 
-    // Pago Confirmado → solo Administración, y solo en la columna Administración.
+    // Pago Confirmado → Administración o Administrador de Ventas, en la columna Administración.
     case "ticket:confirmPayment":
-      return r === ROLES.ADMINISTRATION && colMatches(resource, "Administración");
+      return (r === ROLES.ADMINISTRATION || r === ROLES.SALES_ADMIN) &&
+        colMatches(resource, "Administración");
+
+    // # de pedido → solo el Ejecutivo dueño (o Administrador de Ventas), en "Agregar Pedido".
+    case "ticket:setPedido":
+      if (r === ROLES.SALES_ADMIN) return colMatches(resource, "Agregar Pedido");
+      if (r === ROLES.SALES_EXEC) return ownsTicket(user, resource) && colMatches(resource, "Agregar Pedido");
+      return false;
 
     // Aceptar/Rechazar el costo → solo el vendedor que CREÓ el ticket.
     case "ticket:decideCost":

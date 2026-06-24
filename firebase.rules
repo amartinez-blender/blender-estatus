@@ -109,6 +109,11 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/tickets/$(ticketId)).data;
     }
 
+    // Nombre de la columna de un ticket (para permisos por columna).
+    function ticketColumnName(t) {
+      return get(/databases/$(database)/documents/columns/$(t.columnId)).data.name;
+    }
+
     function isValidTicket(d) {
       return d.orderNumber is string && d.orderNumber.matches('^[0-9]{1,5}$')
         && d.treatment in ['Fabricación', 'Almacén']
@@ -120,6 +125,7 @@ service cloud.firestore {
         && (d.priority == null || d.priority in ['Baja', 'Media', 'Alta', 'Urgente'])
         && (!('tipoPago' in d) || d.tipoPago == null || d.tipoPago in ['Contado', 'Crédito'])
         && (!('paymentConfirmed' in d) || d.paymentConfirmed is bool)
+        && (!('paymentMethod' in d) || d.paymentMethod == null || d.paymentMethod in ['Transferencia', 'Crédito'])
         && (!('pedidoNumber' in d) || d.pedidoNumber == null || d.pedidoNumber is string)
         && d.addressNA is bool
         && d.shippingAddress is string && d.shippingAddress.size() <= 500
@@ -166,7 +172,10 @@ service cloud.firestore {
         return changedKeys().hasOnly(['shippingPaidByClient', 'columnId', 'lastMovedAt', 'updatedAt']);
       }
       function onlyConfirmPayment() {
-        return changedKeys().hasOnly(['paymentConfirmed', 'columnId', 'lastMovedAt', 'updatedAt']);
+        return changedKeys().hasOnly(['paymentConfirmed', 'paymentMethod', 'columnId', 'lastMovedAt', 'updatedAt']);
+      }
+      function onlyAddPedido() {
+        return changedKeys().hasOnly(['pedidoNumber', 'columnId', 'lastMovedAt', 'updatedAt']);
       }
 
       allow read: if canViewTicketData(resource.data);
@@ -192,12 +201,13 @@ service cloud.firestore {
           )
           || (
             hasRole('sales_exec') && resource.data.ownerId == request.auth.uid
-            && onlyPaidMove()
+            && (onlyPaidMove() || onlyAddPedido())
           )
-          || (hasRole('production') && resource.data.treatment == 'Fabricación'
-              && (onlyMoveFields() || onlyProductionPromise()))
-          || (hasRole('warehouse') && resource.data.treatment == 'Almacén'
-              && (onlyMoveFields() || onlyWarehousePromise()))
+          || (hasRole('production') && resource.data.treatment == 'Fabricación' && onlyMoveFields())
+          || (hasRole('warehouse') && resource.data.treatment == 'Almacén' && onlyMoveFields())
+          // Fecha y Hora promesa: según la COLUMNA donde está el ticket (no el tratamiento).
+          || (hasRole('production') && ticketColumnName(resource.data) == 'Fabricación' && onlyProductionPromise())
+          || (hasRole('warehouse') && ticketColumnName(resource.data) == 'Almacén' && onlyWarehousePromise())
           || (hasRole('warehouse') && isQuoteShipping(resource.data) && onlyShippingCost())
           || (hasRole('administration') && onlyConfirmPayment())
           || (canOperateTicketData(resource.data) && onlyCounterFields())

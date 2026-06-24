@@ -3,14 +3,15 @@
 
 import { store, $, $$, on, escapeHtml, relativeTime, fmtDateTime, fmtFileSize, fmtCountdown, fmtMoney, normalize,
   mainOrderNumber, orderRef,
-  TREATMENTS, SHIPPING_TYPES, DELIVERY_MODES, PRIORITIES, PAYMENT_TYPES, MAX_ADDRESS_LENGTH } from "./utils.js";
+  TREATMENTS, SHIPPING_TYPES, DELIVERY_MODES, DELIVERY_MODES_SHIPPING, PRIORITIES,
+  PAYMENT_TYPES, PAYMENT_METHODS, MAX_ADDRESS_LENGTH } from "./utils.js";
 import { can, visibleTickets } from "./permissions.js";
 import { activeColumns, getColumn, columnName, routeColumnId } from "./columns.js";
 import { renderVendorFilter, vendorFilterMatch } from "./filters.js";
-import { computeSla, isFabricacionColumn, isAlmacenColumn, isCotizacionColumn, isCotizacionListaColumn, isAdministracionColumn } from "./sla.js";
+import { computeSla, isFabricacionColumn, isAlmacenColumn, isCotizacionColumn, isCotizacionListaColumn, isAdministracionColumn, isAgregarPedidoColumn } from "./sla.js";
 import { getTicket, createTicket, updateTicket, moveTicket, setTicketStatus, deleteTicket,
   setProductionPromise, setWarehousePromise, setShippingCost,
-  acceptShippingCost, markShippingPaid, rejectShippingCost, confirmPayment } from "./tickets.js";
+  acceptShippingCost, markShippingPaid, rejectShippingCost, confirmPayment, addPedido } from "./tickets.js";
 import { getUser, userName, sellableUsers } from "./users.js";
 import { listenComments, addComment, editComment, softDeleteComment, mentionSuggestions, highlightMentions } from "./comments.js";
 import { listenAttachments, uploadAttachment, deleteAttachment, isImage } from "./attachments.js";
@@ -48,6 +49,7 @@ function renderBoardColumns() {
 
   const filter = $("#board-status-filter").value || "Activo";
   const slaFilter = $("#board-sla-filter")?.value || ""; // "", "ontime", "late"
+  const search = ($("#board-search")?.value || "").trim().toLowerCase();
   const tickets = visibleTickets(user, store.tickets)
     .filter((t) => (filter === "Todos" ? true : t.status === filter))
     .filter(vendorFilterMatch)
@@ -56,6 +58,12 @@ function renderBoardColumns() {
       const sla = computeSla(t);
       if (!sla) return false; // sin SLA no entra en "en tiempo"/"atrasada"
       return slaFilter === "late" ? sla.late : !sla.late;
+    })
+    .filter((t) => {
+      if (!search) return true;
+      // Busca por # de cotización (orderNumber) o # de pedido (pedidoNumber).
+      return String(t.orderNumber || "").toLowerCase().includes(search) ||
+        String(t.pedidoNumber || "").toLowerCase().includes(search);
     });
 
   container.innerHTML = cols.map((col) => {
@@ -71,8 +79,6 @@ function renderBoardColumns() {
             ? colTickets.map((t) => cardHtml(t, user)).join("")
             : `<div class="column-empty">Sin tickets</div>`}
         </div>
-        ${can(user, "ticket:create") ? `
-          <button class="btn btn-add-card" data-col="${col.id}">+ Agregar ticket</button>` : ""}
       </section>`;
   }).join("");
 
@@ -110,6 +116,8 @@ function cardHtml(t, user) {
         <div class="card-sla sla-await">⏳ Falta confirmar pago del cliente</div>` : ""}
       ${isAdministracionColumn(t) && t.status === "Activo" && !t.paymentConfirmed ? `
         <div class="card-sla sla-await">🧾 Por confirmar pago</div>` : ""}
+      ${isAgregarPedidoColumn(t) && t.status === "Activo" && !t.pedidoNumber ? `
+        <div class="card-sla sla-await">🔢 Por agregar # de pedido</div>` : ""}
       <div class="card-footer">
         ${avatarHtml(owner, 24)}
         <span class="card-meta">
@@ -126,11 +134,6 @@ function bindBoardEvents(container, user) {
   // Abrir detalle
   $$(".card", container).forEach((card) => {
     card.addEventListener("click", () => openTicketModal(card.dataset.id));
-  });
-
-  // Crear en columna específica
-  $$(".btn-add-card", container).forEach((btn) => {
-    btn.addEventListener("click", () => openTicketForm(btn.dataset.col));
   });
 
   // Drag & drop nativo (desktop). En móvil se usa "Mover a…" en el detalle.
@@ -188,10 +191,6 @@ export function openTicketForm(defaultColumnId = null) {
           <input class="input" id="tf-order" inputmode="numeric" pattern="\\d{1,5}"
             maxlength="5" placeholder="12345" required>
         </label>
-        <label class="field hidden" id="tf-pedido-field">
-          <span>Número de pedido *</span>
-          <input class="input" id="tf-pedido" inputmode="numeric" maxlength="10" placeholder="Ej. 100245">
-        </label>
         <label class="field">
           <span>Tratamiento *</span>
           <select class="input" id="tf-treatment" required>
@@ -210,7 +209,7 @@ export function openTicketForm(defaultColumnId = null) {
           <span>Modalidad de entrega *</span>
           <select class="input" id="tf-delivery" required>
             <option value="">Selecciona…</option>
-            ${DELIVERY_MODES.map((t) => `<option>${t}</option>`).join("")}
+            ${DELIVERY_MODES_SHIPPING.map((t) => `<option>${t}</option>`).join("")}
           </select>
         </label>
         <label class="field">
@@ -277,15 +276,18 @@ export function openTicketForm(defaultColumnId = null) {
 
   treatmentSel.addEventListener("change", updateColumnPill);
 
-  // Req. 5: al elegir "Recolección" → marca N/A y fija Modalidad = Recolección.
-  // Además, en Recolección el # de pedido es obligatorio desde la creación.
+  // Al elegir "Recolección" → N/A + Modalidad = Recolección.
+  // En envíos (por cobrar / pre-pagado) la Modalidad NO ofrece "Recolección" (req. 9).
   shippingSel.addEventListener("change", () => {
     const esRecoleccion = normalize(shippingSel.value) === normalize("Recolección");
     if (esRecoleccion) {
-      setAddressDisabled(true);
+      deliverySel.innerHTML = `<option>Recolección</option>`;
       deliverySel.value = "Recolección";
+      setAddressDisabled(true);
+    } else {
+      deliverySel.innerHTML = `<option value="">Selecciona…</option>` +
+        DELIVERY_MODES_SHIPPING.map((t) => `<option>${t}</option>`).join("");
     }
-    $("#tf-pedido-field").classList.toggle("hidden", !esRecoleccion);
     updateColumnPill();
   });
 
@@ -307,7 +309,6 @@ export function openTicketForm(defaultColumnId = null) {
         deliveryMode: deliverySel.value,
         priority: $("#tf-priority").value || null,
         tipoPago: $("#tf-payment").value,
-        pedidoNumber: $("#tf-pedido")?.value.trim() || null,
         columnId,
         ownerId: $("#tf-owner").value,
         addressNA: naCheck.checked,
@@ -368,15 +369,11 @@ function costDecisionSectionHtml(t, user) {
   if (t.costDecision !== "accepted") {
     // Pendiente de aceptar/rechazar (solo el vendedor creador).
     body = canDecide
-      ? `<label class="field">
-           <span># de pedido * <small class="text-muted">(requerido al aceptar)</small></span>
-           <input class="input" id="tm-pedido" inputmode="numeric" maxlength="10" placeholder="Ej. 100245">
-         </label>
-         <div class="detail-actions">
+      ? `<div class="detail-actions">
            <button class="btn btn-primary" id="tm-cost-accept">Aceptar costo</button>
-           <button class="btn btn-ghost btn-danger-text" id="tm-cost-reject">Rechazar costo</button>
+           <button class="btn btn-ghost btn-danger-text" id="tm-cost-reject">Retroalimentar Costo</button>
          </div>`
-      : `<p class="text-muted">Esperando que ${escapeHtml(userName(t.createdBy))} (vendedor que creó el ticket) acepte o rechace el costo.</p>`;
+      : `<p class="text-muted">Esperando que ${escapeHtml(userName(t.createdBy))} (vendedor que creó el ticket) acepte o retroalimente el costo.</p>`;
   } else if (prepaid && !t.shippingPaidByClient) {
     // Aceptado y pre-pagado: falta confirmar el pago del cliente.
     body = canPay
@@ -413,13 +410,41 @@ function adminSectionHtml(t, user) {
         <strong class="sla-label">${escapeHtml(sla?.label || "")}</strong>
         <span class="sla-count">${sla ? (sla.late ? "Vencido" : "Restan " + fmtCountdown(sla.remainingMs)) : ""}</span>
       </div>
+      <label class="field">
+        <span>Tipo de pago${canConfirm ? " *" : ""}</span>
+        <select class="input" id="tm-payment-method" ${canConfirm ? "" : "disabled"}>
+          <option value="">Selecciona…</option>
+          ${PAYMENT_METHODS.map((m) => `<option ${t.paymentMethod === m ? "selected" : ""}>${m}</option>`).join("")}
+        </select>
+      </label>
       <label class="field field-checkbox">
         <input type="checkbox" id="tm-payment-confirmed" ${t.paymentConfirmed ? "checked" : ""} ${canConfirm ? "" : "disabled"}>
         <span>Pago Confirmado</span>
       </label>
       ${canConfirm
         ? `<button class="btn btn-primary" id="tm-confirm-payment">Confirmar pago y continuar</button>`
-        : `<p class="text-muted">Solo el rol de Administración puede confirmar el pago.</p>`}
+        : `<p class="text-muted">Solo Administración (o Administrador de Ventas) puede confirmar el pago.</p>`}
+    </div>`;
+}
+
+// Sección "Agregar Pedido": el Ejecutivo de Ventas captura el # de pedido (req. 4).
+function agregarPedidoSectionHtml(t, user) {
+  if (t.status !== "Activo" || !isAgregarPedidoColumn(t)) return "";
+  const canSet = can(user, "ticket:setPedido", withCol(t));
+  return `
+    <div class="sla-box cost-decision-box">
+      <div class="sla-banner">
+        <span>🔢</span>
+        <strong class="sla-label">Captura el # de pedido</strong>
+        <span class="sla-count">Cotización #${escapeHtml(t.orderNumber)}</span>
+      </div>
+      ${canSet
+        ? `<label class="field">
+             <span>Número de pedido *</span>
+             <input class="input" id="tm-pedido" inputmode="numeric" maxlength="10" placeholder="Ej. 100245" value="${escapeHtml(t.pedidoNumber || "")}">
+           </label>
+           <button class="btn btn-primary" id="tm-pedido-save">Guardar # de pedido y continuar</button>`
+        : `<p class="text-muted">Solo el Ejecutivo de Ventas asignado puede capturar el # de pedido.</p>`}
     </div>`;
 }
 
@@ -462,8 +487,8 @@ function slaSectionHtml(t, user) {
   const fieldLabel = fab ? "Fecha y Hora en Almacén" : "Fecha y Hora para Listo";
   const value = fab ? (t.promiseDateWarehouse || "") : (t.promiseDateReady || "");
   const canSet = fab
-    ? can(user, "ticket:setProductionPromise", t)
-    : can(user, "ticket:setWarehousePromise", t);
+    ? can(user, "ticket:setProductionPromise", withCol(t))
+    : can(user, "ticket:setWarehousePromise", withCol(t));
 
   return `
     <div class="sla-box ${sla?.late ? "sla-late" : "sla-ontime"}" id="tm-sla-box">
@@ -538,6 +563,7 @@ function renderTicketDetail(t) {
       ${slaSectionHtml(t, user)}
       ${costDecisionSectionHtml(t, user)}
       ${adminSectionHtml(t, user)}
+      ${agregarPedidoSectionHtml(t, user)}
 
       <div class="form-grid">
         <label class="field">
@@ -561,7 +587,8 @@ function renderTicketDetail(t) {
         <label class="field">
           <span>Modalidad de entrega</span>
           <select class="input" id="tm-delivery" ${dis}>
-            ${DELIVERY_MODES.map((x) => `<option ${t.deliveryMode === x ? "selected" : ""}>${x}</option>`).join("")}
+            ${(normalize(t.shippingType) === normalize("Recolección") ? DELIVERY_MODES : DELIVERY_MODES_SHIPPING)
+              .map((x) => `<option ${t.deliveryMode === x ? "selected" : ""}>${x}</option>`).join("")}
           </select>
         </label>
         <label class="field">
@@ -702,18 +729,13 @@ function bindDetailEvents(t, perms) {
     }
   });
 
-  // Aceptar / Rechazar costo (vendedor creador) en "Cotización de envío lista".
+  // Aceptar / Retroalimentar costo (vendedor creador) en "Cotización de envío lista".
   $("#tm-cost-accept")?.addEventListener("click", async () => {
-    const pedido = $("#tm-pedido")?.value.trim();
-    if (!pedido || !/^\d{1,10}$/.test(pedido)) {
-      toast("Captura el # de pedido (solo números) para aceptar el costo.", "error");
-      return;
-    }
     const btn = $("#tm-cost-accept");
     setSaving(btn, true);
     try {
-      await acceptShippingCost(t, pedido);
-      toast("Costo aceptado. # de pedido asignado.", "success");
+      await acceptShippingCost(t);
+      toast("Costo aceptado.", "success");
       closeModal("ticket-modal");
       closeDetailListeners();
     } catch (err) {
@@ -723,18 +745,18 @@ function bindDetailEvents(t, perms) {
   });
   $("#tm-cost-reject")?.addEventListener("click", async () => {
     const ok = await confirmDialog({
-      title: "Rechazar costo de envío",
+      title: "Retroalimentar costo de envío",
       message: `El ticket #${mainOrderNumber(t)} regresará a Cotización de envío para recotizar. ¿Continuar?`,
-      confirmText: "Rechazar", danger: true,
+      confirmText: "Retroalimentar", danger: true,
     });
     if (!ok) return;
     try {
       await rejectShippingCost(t);
-      toast("Costo rechazado. Regresó a Cotización de envío.", "success");
+      toast("Costo retroalimentado. Regresó a Cotización de envío.", "success");
       closeModal("ticket-modal");
       closeDetailListeners();
     } catch (err) {
-      toast("No se pudo rechazar: " + err.message, "error");
+      toast("No se pudo procesar: " + err.message, "error");
     }
   });
   // Confirmar "Envío Pagado por el cliente" (pre-pagado).
@@ -756,8 +778,13 @@ function bindDetailEvents(t, perms) {
     }
   });
 
-  // Confirmar Pago (Administración) → la tarjeta avanza a Fabricación/Almacén.
+  // Confirmar Pago (Administración) → la tarjeta avanza a "Agregar Pedido".
   $("#tm-confirm-payment")?.addEventListener("click", async () => {
+    const method = $("#tm-payment-method")?.value;
+    if (!method) {
+      toast("Selecciona el tipo de pago (Transferencia o Crédito).", "error");
+      return;
+    }
     if (!$("#tm-payment-confirmed")?.checked) {
       toast("Marca la casilla 'Pago Confirmado' para continuar.", "error");
       return;
@@ -765,13 +792,33 @@ function bindDetailEvents(t, perms) {
     const btn = $("#tm-confirm-payment");
     setSaving(btn, true);
     try {
-      await confirmPayment(t);
-      toast("Pago confirmado. El pedido avanzó.", "success");
+      await confirmPayment(t, method);
+      toast("Pago confirmado. Pasó a Agregar Pedido.", "success");
       closeModal("ticket-modal");
       closeDetailListeners();
     } catch (err) {
       toast("No se pudo confirmar: " + err.message, "error");
       setSaving(btn, false, "Confirmar pago y continuar");
+    }
+  });
+
+  // Agregar # de pedido (Ejecutivo de Ventas) → avanza a Fabricación/Almacén.
+  $("#tm-pedido-save")?.addEventListener("click", async () => {
+    const pedido = $("#tm-pedido")?.value.trim();
+    if (!pedido || !/^\d{1,10}$/.test(pedido)) {
+      toast("Captura un # de pedido válido (solo números).", "error");
+      return;
+    }
+    const btn = $("#tm-pedido-save");
+    setSaving(btn, true);
+    try {
+      await addPedido(t, pedido);
+      toast("# de pedido guardado. El ticket avanzó.", "success");
+      closeModal("ticket-modal");
+      closeDetailListeners();
+    } catch (err) {
+      toast("No se pudo guardar: " + err.message, "error");
+      setSaving(btn, false, "Guardar # de pedido y continuar");
     }
   });
 

@@ -47,6 +47,7 @@ export async function ensureSeed() {
       };
       await ensureColumn(ROUTING_COLUMN_NAMES.COTIZACION_LISTA, ROUTING_COLUMN_NAMES.COTIZACION);
       await ensureColumn(ROUTING_COLUMN_NAMES.ADMINISTRACION, ROUTING_COLUMN_NAMES.COTIZACION_LISTA);
+      await ensureColumn(ROUTING_COLUMN_NAMES.AGREGAR_PEDIDO, ROUTING_COLUMN_NAMES.ADMINISTRACION);
     }
 
     // Configuración inicial

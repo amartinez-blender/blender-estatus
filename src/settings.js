@@ -37,6 +37,20 @@ export function getSla() {
 
 const hm = (d) => ({ hours: Number(d.hours) || 0, minutes: Number(d.minutes) || 0 });
 
+// Overrides de permisos (matriz del Admin). Estructura: { rol: { accion: false } }.
+export function getPermissionOverrides() {
+  return (store.settings && store.settings.permissions) || {};
+}
+
+// Guarda la matriz de permisos (solo SuperAdmin).
+export async function savePermissionOverrides(permissions) {
+  await setDoc(
+    doc(fb.db, "settings", "app"),
+    { permissions, updatedAt: serverTimestamp() },
+    { merge: true }
+  );
+}
+
 // Solo SuperAdmin (reforzado en firebase.rules).
 export async function saveSlaSettings({ quote, admin, production, warehouse }) {
   await setDoc(

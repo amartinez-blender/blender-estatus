@@ -103,3 +103,6 @@ export function isCotizacionListaColumn(ticket) {
 export function isAdministracionColumn(ticket) {
   return normalize(columnName(ticket?.columnId)) === normalize(SLA_COLUMNS.ADMINISTRACION);
 }
+export function isAgregarPedidoColumn(ticket) {
+  return normalize(columnName(ticket?.columnId)) === normalize("Agregar Pedido");
+}
