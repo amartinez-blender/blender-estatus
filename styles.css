@@ -761,6 +761,20 @@ html[data-theme="dark"] .notif-item.is-unread { background: #2B2710; }
 /* Tarjeta de "zona de peligro" en Admin */
 .danger-card { border: 1.5px solid var(--color-danger); margin-top: 12px; }
 
+/* Tiempos promedio por etapa (Dashboard) — etiquetas completas, sin truncar. */
+.steptime-list { display: flex; flex-direction: column; }
+.steptime-row {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 16px;
+  padding: 9px 0; border-bottom: 1px dashed var(--color-border);
+}
+.steptime-row:last-child { border-bottom: none; }
+.steptime-label { font-size: 0.85rem; font-weight: 600; flex: 1; min-width: 0; }
+.steptime-val { color: var(--color-text-muted); font-size: 0.8rem; text-align: right; white-space: nowrap; }
+@media (max-width: 480px) {
+  .steptime-row { flex-direction: column; gap: 2px; }
+  .steptime-val { text-align: left; }
+}
+
 /* Matriz de permisos por rol (Admin) */
 .perm-matrix { display: flex; flex-direction: column; gap: 14px; margin: 8px 0 14px; }
 .perm-role { border: 1px solid var(--color-border); border-radius: var(--radius); padding: 12px 14px; }
