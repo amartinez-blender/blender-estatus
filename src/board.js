@@ -525,10 +525,10 @@ function renderTicketDetail(t) {
   const user = store.currentUser;
   const canEdit = can(user, "ticket:edit", t) && t.status === "Activo";
   const canCancel = can(user, "ticket:cancel", t) && t.status === "Activo";
-  const canClose = can(user, "ticket:close", t) && t.status === "Activo";
+  const canClose = can(user, "ticket:close", withCol(t)) && t.status === "Activo";
   const canMove = can(user, "ticket:move", withCol(t)) && t.status === "Activo";
-  const canComment = can(user, "comment:create", t) && t.status === "Activo";
-  const canAttach = can(user, "attachment:add", t) && t.status === "Activo";
+  const canComment = can(user, "comment:create", t); // todos pueden comentar, en cualquier etapa
+  const canAttach = can(user, "attachment:add", withCol(t)) && t.status === "Activo";
   const canAssign = can(user, "ticket:assignOwner", t);
   const canPayType = can(user, "ticket:setPaymentType", t) && t.status === "Activo";
   const isSuper = can(user, "ticket:delete", t);

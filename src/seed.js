@@ -160,6 +160,7 @@ export async function resetAllData() {
     if (on) batch.delete(doc(fb.db, "orderNumbers", String(on)));
   });
   const breaches = await deleteAllInCollection("slaBreaches");
+  await deleteAllInCollection("stepTimes");
   const notifications = await deleteAllInCollection("notifications");
   return { tickets, breaches, notifications };
 }

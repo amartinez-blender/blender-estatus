@@ -69,9 +69,16 @@ export function can(user, action, resource = null) {
     // Cancelar/cerrar ticket: NUNCA Producción, Almacén ni Auditor (req. 9 y 10).
     // Solo quien puede editar el ticket (SuperAdmin, Admin de Ventas, dueño Ejecutivo).
     case "ticket:cancel":
+      if (r === ROLES.SALES_ADMIN) return true;
+      if (r === ROLES.SALES_EXEC) return ownsTicket(user, resource);
+      return false;
+
     case "ticket:close":
       if (r === ROLES.SALES_ADMIN) return true;
       if (r === ROLES.SALES_EXEC) return ownsTicket(user, resource);
+      // Almacén cierra SOLO en "Listos para recolección" y con evidencia adjunta.
+      if (r === ROLES.WAREHOUSE)
+        return colMatches(resource, "Listos para recolección") && (resource?.attachmentsCount || 0) > 0;
       return false;
 
     // Fecha y Hora en Almacén → Producción, según la COLUMNA Fabricación.
@@ -118,14 +125,20 @@ export function can(user, action, resource = null) {
     case "ticket:delete":
       return false; // solo SuperAdmin (cubierto arriba)
 
-    // ---------- Comentarios y adjuntos ----------
-    // resource = ticket
+    // ---------- Comentarios ----------
+    // Todos los usuarios (activos) pueden comentar en cualquier tarjeta.
     case "comment:create":
+      return true;
+
+    // ---------- Adjuntos (se mantienen restringidos por rol) ----------
     case "attachment:add":
       if (r === ROLES.AUDITOR) return false;
       if (r === ROLES.SALES_ADMIN || r === ROLES.ADMINISTRATION) return true;
       if (r === ROLES.SALES_EXEC) return ownsTicket(user, resource);
-      if (r === ROLES.PRODUCTION || r === ROLES.WAREHOUSE) return treatmentMatches(user, resource);
+      if (r === ROLES.PRODUCTION) return treatmentMatches(user, resource);
+      // Almacén: sus tickets, y además evidencia en "Listos para recolección".
+      if (r === ROLES.WAREHOUSE)
+        return treatmentMatches(user, resource) || colMatches(resource, "Listos para recolección");
       return false;
 
     // resource = { ticket, comment }

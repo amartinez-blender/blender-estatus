@@ -241,6 +241,7 @@ export async function setProductionPromise(ticket, isoDateTime) {
   const entered = toDate(ticket.lastMovedAt)?.getTime() ?? Date.now();
   const deadline = addBusinessMs(entered, durationToMs(getSla().production)).getTime();
   recordBreach(ticket, "Asignar fecha (Producción)", businessMsBetween(deadline, Date.now()));
+  recordStepTime(ticket, "Fecha y Hora en Almacén");
   await updateDoc(doc(fb.db, "tickets", ticket.id), {
     promiseDateWarehouse: isoDateTime || null,
     updatedAt: serverTimestamp(),
@@ -260,6 +261,7 @@ export async function setWarehousePromise(ticket, isoDateTime) {
   const entered = toDate(ticket.lastMovedAt)?.getTime() ?? Date.now();
   const deadline = addBusinessMs(entered, durationToMs(getSla().warehouse)).getTime();
   recordBreach(ticket, "Asignar fecha (Almacén)", businessMsBetween(deadline, Date.now()));
+  recordStepTime(ticket, "Fecha y Hora para Listo");
   await updateDoc(doc(fb.db, "tickets", ticket.id), {
     promiseDateReady: isoDateTime || null,
     updatedAt: serverTimestamp(),
@@ -284,6 +286,7 @@ export async function setShippingCost(ticket, cost) {
   const entered = toDate(ticket.lastMovedAt)?.getTime() ?? toDate(ticket.createdAt)?.getTime() ?? Date.now();
   const quoteDeadline = addBusinessMs(entered, durationToMs(getSla().quote)).getTime();
   recordBreach(ticket, "Cotización de envío", businessMsBetween(quoteDeadline, Date.now()));
+  recordStepTime(ticket, "Cotización de envío");
 
   const updates = {
     shippingCost: amount,
@@ -309,23 +312,28 @@ export async function setShippingCost(ticket, cost) {
       { to: target.id });
   }
 
-  const owner = store.users.find((u) => (u.uid || u.id) === ticket.ownerId);
-  const ownerName = owner?.displayName || userName(ticket.ownerId);
-  await notifyUsers([ticket.ownerId], {
+  // Avisa al Ejecutivo asignado/creador Y a todos los Administradores de Ventas,
+  // para que cualquiera de ellos acepte o retroalimente el costo.
+  const salesAdmins = store.users
+    .filter((u) => u.role === ROLES.SALES_ADMIN && u.active !== false)
+    .map((u) => u.uid || u.id);
+  const targets = [...new Set([ticket.ownerId, ticket.createdBy, ...salesAdmins].filter(Boolean))];
+  await notifyUsers(targets, {
     ticketId: ticket.id, type: "updated",
     title: orderRef(ticket),
-    message: `Cotización lista: ${fmtMoney(amount)}. ${willMove ? "Pasó a Cotización de envío lista." : ""}`,
+    message: `Costo de envío: ${fmtMoney(amount)}. Acepta o retroalimenta el costo en "Cotización de envío lista".`,
   });
 
-  // Aviso por Google Chat (webhook a un espacio; best-effort).
-  // Mención al vendedor: si tenemos su ID de Google Chat usamos un ping real;
-  // si no, lo nombramos con "@" + correo (texto), que es lo posible vía webhook.
-  const mention = owner?.chatUserId
-    ? `<users/${owner.chatUserId}>`
-    : `@${ownerName}${owner?.email ? " (" + owner.email + ")" : ""}`;
+  // Aviso por Google Chat (webhook a un espacio; best-effort). Menciona al
+  // vendedor asignado/creador y a los Administradores de Ventas.
+  const people = [...new Set([ticket.ownerId, ticket.createdBy].filter(Boolean))].map((uid) => {
+    const u = store.users.find((x) => (x.uid || x.id) === uid);
+    return u?.chatUserId ? `<users/${u.chatUserId}>` : `@${u?.displayName || userName(uid)}`;
+  });
+  const mentions = [...new Set([...people, ...roleMentions(ROLES.SALES_ADMIN).split(" ").filter(Boolean)])].join(" ");
   await sendGoogleChat(
-    `📦 *${orderRef(ticket)}* — cotización de envío lista.\n` +
-    `Costo: *${fmtMoney(amount)}*. Responsable: ${mention}`
+    `📦 *${orderRef(ticket)}* — cotización de envío lista. Costo: *${fmtMoney(amount)}*.\n` +
+    `Acepta o retroalimenta el costo: ${mentions}`
   );
 }
 
@@ -402,6 +410,28 @@ function recordBreach(ticket, phase, lateMs) {
   }
 }
 
+// Registra el tiempo HÁBIL que tomó completar una acción (desde que el ticket
+// entró a la etapa hasta ahora). Alimenta los "Tiempos promedio" del Dashboard.
+// Se llama ANTES de mover/actualizar, para usar el lastMovedAt de entrada.
+function recordStepTime(ticket, phase) {
+  const entered = toDate(ticket.lastMovedAt)?.getTime()
+    ?? toDate(ticket.createdAt)?.getTime() ?? Date.now();
+  const ms = businessMsBetween(entered, Date.now());
+  try {
+    addDoc(collection(fb.db, "stepTimes"), {
+      ticketId: ticket.id,
+      orderNumber: ticket.orderNumber || null,
+      phase,
+      ms: Math.round(ms),
+      ownerId: ticket.ownerId || null,
+      actorId: store.currentUser?.uid || null,
+      createdAt: serverTimestamp(),
+    });
+  } catch (err) {
+    console.warn("[stepTime] No se pudo registrar:", err);
+  }
+}
+
 const isPrepaid = (t) => normalize(t.shippingType) === normalize("Envío pre-pagado");
 
 // El vendedor creador ACEPTA el costo.
@@ -410,6 +440,7 @@ const isPrepaid = (t) => normalize(t.shippingType) === normalize("Envío pre-pag
 // El # de pedido NO se captura aquí, sino en la columna "Agregar Pedido".
 export async function acceptShippingCost(ticket) {
   const user = store.currentUser;
+  recordStepTime(ticket, "Confirmar costo de envío");
 
   if (isPrepaid(ticket)) {
     await updateDoc(doc(fb.db, "tickets", ticket.id), {
@@ -505,6 +536,7 @@ export async function confirmPayment(ticket, paymentMethod) {
   const entered = toDate(ticket.lastMovedAt)?.getTime() ?? Date.now();
   const deadline = addBusinessMs(entered, durationToMs(getSla().admin)).getTime();
   recordBreach(ticket, "Confirmar Pago", businessMsBetween(deadline, Date.now()));
+  recordStepTime(ticket, "Confirmar pago");
 
   const target = findColumnByName(ROUTING_COLUMN_NAMES.AGREGAR_PEDIDO);
   const updates = { paymentConfirmed: true, paymentMethod: method, updatedAt: serverTimestamp() };
@@ -531,6 +563,7 @@ export async function addPedido(ticket, pedidoNumber) {
   if (!/^\d{1,10}$/.test(pedido)) {
     throw new Error("Captura un # de pedido válido (solo números).");
   }
+  recordStepTime(ticket, "Agregar # de pedido");
   const target = findColumnByName(ticket.treatment); // "Fabricación" o "Almacén"
   const updates = { pedidoNumber: pedido, updatedAt: serverTimestamp() };
   if (target) { updates.columnId = target.id; updates.lastMovedAt = serverTimestamp(); }

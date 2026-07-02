@@ -6,9 +6,19 @@ import { visibleTickets, can } from "./permissions.js";
 import { activeColumns, columnName } from "./columns.js";
 import { userName } from "./users.js";
 import { renderVendorFilter, vendorFilterMatch } from "./filters.js";
-import { fetchSlaBreaches } from "./activity.js";
+import { fetchSlaBreaches, fetchStepTimes } from "./activity.js";
 import { resetBreaches } from "./seed.js";
 import { emptyState, loadingState, toast, confirmDialog } from "./ui.js";
+
+// Etapas para los tiempos promedio (orden del flujo).
+const STEP_PHASES = [
+  "Cotización de envío",
+  "Confirmar costo de envío",
+  "Confirmar pago",
+  "Agregar # de pedido",
+  "Fecha y Hora en Almacén",
+  "Fecha y Hora para Listo",
+];
 
 const filters = {
   dateFrom: "", dateTo: "", columnId: "", treatment: "", shippingType: "", status: "",
@@ -27,6 +37,7 @@ const phaseFilter = new Set(BREACH_PHASES); // todas seleccionadas por defecto
 
 export function renderDashboard() {
   breachCache = null; // refresca atrasos al entrar al Dashboard
+  stepCache = null;
   const container = $("#dashboard-content");
   container.innerHTML = `
     <div class="dash-filters">
@@ -74,6 +85,12 @@ export function renderDashboard() {
           </label>`).join("")}
       </div>
       <div id="dash-breaches">${loadingState()}</div>
+    </section>
+
+    <section class="detail-section">
+      <h3>Tiempos promedio por etapa</h3>
+      <p class="text-muted">Promedio de tiempo hábil (L–V 08:00–18:00) que toma completar cada etapa por ticket.</p>
+      <div id="dash-steptimes">${loadingState()}</div>
     </section>`;
 
   const bind = (id, key) => {
@@ -81,6 +98,7 @@ export function renderDashboard() {
       filters[key] = e.target.value;
       renderMetrics();
       renderBreaches();
+      renderStepTimes();
     });
   };
   bind("#df-from", "dateFrom");
@@ -99,7 +117,7 @@ export function renderDashboard() {
   });
 
   // Filtro de vendedor compartido (multi-selección). Refresca solo las métricas.
-  renderVendorFilter($("#dash-vendor-filter"), () => { renderMetrics(); renderBreaches(); });
+  renderVendorFilter($("#dash-vendor-filter"), () => { renderMetrics(); renderBreaches(); renderStepTimes(); });
 
   $("#btn-reset-graphs")?.addEventListener("click", async (e) => {
     const ok = await confirmDialog({
@@ -123,10 +141,12 @@ export function renderDashboard() {
 
   renderMetrics();
   renderBreaches();
+  renderStepTimes();
 }
 
 // Caché simple para no re-leer en cada cambio de filtro.
 let breachCache = null;
+let stepCache = null;
 
 async function renderBreaches() {
   const box = $("#dash-breaches");
@@ -188,6 +208,49 @@ async function renderBreaches() {
   } catch (err) {
     console.error("[dashboard] atrasos:", err);
     box.innerHTML = `<p class="text-muted">No se pudieron cargar los atrasos. Si es la primera vez, crea el índice que sugiera la consola de Firebase.</p>`;
+  }
+}
+
+// Tiempos promedio por etapa (req.). Respeta filtros de fecha y de vendedor.
+async function renderStepTimes() {
+  const box = $("#dash-steptimes");
+  if (!box) return;
+  try {
+    if (!stepCache) stepCache = await fetchStepTimes();
+    const from = filters.dateFrom ? new Date(filters.dateFrom + "T00:00:00") : null;
+    const to = filters.dateTo ? new Date(filters.dateTo + "T23:59:59") : null;
+    const sellers = store.vendorFilter || [];
+
+    const rows = stepCache.filter((s) => {
+      const d = toDate(s.createdAt);
+      if (from && d && d < from) return false;
+      if (to && d && d > to) return false;
+      if (sellers.length && s.ownerId && !sellers.includes(s.ownerId)) return false;
+      return true;
+    });
+
+    const agg = {};
+    rows.forEach((s) => {
+      const a = (agg[s.phase] = agg[s.phase] || { count: 0, ms: 0 });
+      a.count += 1; a.ms += s.ms || 0;
+    });
+
+    // Mostramos las etapas en orden de flujo; "—" si aún no hay datos.
+    box.innerHTML = `
+      <div class="dash-card">
+        ${STEP_PHASES.map((phase) => {
+          const a = agg[phase];
+          const avg = a ? fmtCountdown(a.ms / a.count) : "—";
+          return `
+            <div class="bar-row breach-row">
+              <span class="bar-label" title="${escapeHtml(phase)}">${escapeHtml(phase)}</span>
+              <span class="bar-value bar-value-wide">${a ? `prom. ${avg} · ${a.count} ticket(s)` : "Sin datos aún"}</span>
+            </div>`;
+        }).join("")}
+      </div>`;
+  } catch (err) {
+    console.error("[dashboard] tiempos promedio:", err);
+    box.innerHTML = `<p class="text-muted">No se pudieron cargar los tiempos. Si es la primera vez, crea el índice que sugiera la consola de Firebase.</p>`;
   }
 }
 

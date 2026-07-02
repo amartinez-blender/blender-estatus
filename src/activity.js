@@ -56,3 +56,10 @@ export async function fetchSlaBreaches(max = 2000) {
   const snap = await getDocs(q);
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 }
+
+// Tiempos por etapa para los promedios del Dashboard.
+export async function fetchStepTimes(max = 3000) {
+  const q = query(collection(fb.db, "stepTimes"), orderBy("createdAt", "desc"), limit(max));
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+}

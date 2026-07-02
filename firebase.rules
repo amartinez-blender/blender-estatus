@@ -177,6 +177,11 @@ service cloud.firestore {
       function onlyAddPedido() {
         return changedKeys().hasOnly(['pedidoNumber', 'columnId', 'lastMovedAt', 'updatedAt']);
       }
+      // Almacén cierra en "Listos para recolección" (solo cambia el estatus a Cerrado).
+      function onlyCloseByWarehouse() {
+        return changedKeys().hasOnly(['status', 'updatedAt'])
+          && request.resource.data.status == 'Cerrado';
+      }
 
       allow read: if canViewTicketData(resource.data);
 
@@ -209,6 +214,10 @@ service cloud.firestore {
           || (hasRole('production') && ticketColumnName(resource.data) == 'Fabricación' && onlyProductionPromise())
           || (hasRole('warehouse') && ticketColumnName(resource.data) == 'Almacén' && onlyWarehousePromise())
           || (hasRole('warehouse') && isQuoteShipping(resource.data) && onlyShippingCost())
+          // Almacén cierra en "Listos para recolección" con evidencia adjunta.
+          || (hasRole('warehouse') && onlyCloseByWarehouse()
+              && ticketColumnName(resource.data) == 'Listos para recolección'
+              && resource.data.attachmentsCount > 0)
           || (hasRole('administration') && onlyConfirmPayment())
           || (canOperateTicketData(resource.data) && onlyCounterFields())
         );
@@ -218,17 +227,19 @@ service cloud.firestore {
       match /comments/{commentId} {
         allow read: if canViewTicketData(parentTicket(ticketId));
 
-        allow create: if canOperateTicketData(parentTicket(ticketId))
+        // Cualquier usuario operativo (no pendiente) puede comentar en cualquier tarjeta.
+        allow create: if isStaff() && role() != 'pending'
           && request.resource.data.createdBy == request.auth.uid
           && request.resource.data.text is string
           && request.resource.data.text.size() > 0
           && request.resource.data.text.size() <= 2000
           && request.resource.data.deleted == false;
 
+        // Editar / soft-delete: el autor o el SuperAdmin.
         allow update: if isSuper()
           || (
-            resource.data.createdBy == request.auth.uid
-            && canOperateTicketData(parentTicket(ticketId))
+            isStaff()
+            && resource.data.createdBy == request.auth.uid
             && request.resource.data.createdBy == resource.data.createdBy
           );
 
@@ -238,7 +249,11 @@ service cloud.firestore {
       match /attachments/{attachmentId} {
         allow read: if canViewTicketData(parentTicket(ticketId));
 
-        allow create: if canOperateTicketData(parentTicket(ticketId))
+        allow create: if (
+            canOperateTicketData(parentTicket(ticketId))
+            // Almacén puede adjuntar evidencia en "Listos para recolección".
+            || (hasRole('warehouse') && ticketColumnName(parentTicket(ticketId)) == 'Listos para recolección')
+          )
           && request.resource.data.uploadedBy == request.auth.uid
           && request.resource.data.fileType in ['image/jpeg', 'image/png', 'image/webp', 'application/pdf']
           && request.resource.data.fileSize is number
@@ -288,6 +303,17 @@ service cloud.firestore {
         && role() != 'auditor'
         && request.resource.data.actorId == request.auth.uid
         && request.resource.data.lateMs is number;
+      allow update: if false;
+      allow delete: if isSuper();
+    }
+
+    // Tiempos por etapa para los promedios del Dashboard.
+    match /stepTimes/{stepId} {
+      allow read: if isStaff() && role() != 'pending';
+      allow create: if isStaff()
+        && role() != 'auditor'
+        && request.resource.data.actorId == request.auth.uid
+        && request.resource.data.ms is number;
       allow update: if false;
       allow delete: if isSuper();
     }
