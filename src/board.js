@@ -526,6 +526,9 @@ function renderTicketDetail(t) {
   const canEdit = can(user, "ticket:edit", t) && t.status === "Activo";
   const canCancel = can(user, "ticket:cancel", t) && t.status === "Activo";
   const canClose = can(user, "ticket:close", withCol(t)) && t.status === "Activo";
+  // "Elegible" para cerrar ignorando la evidencia (para mostrar el botón y refrescarlo al adjuntar).
+  const closeEligible = can(user, "ticket:close", { ...withCol(t), attachmentsCount: 1 }) && t.status === "Activo";
+  detail.closeGated = closeEligible && !canClose; // Almacén en Listos sin evidencia aún
   const canMove = can(user, "ticket:move", withCol(t)) && t.status === "Activo";
   const canComment = can(user, "comment:create", t); // todos pueden comentar, en cualquier etapa
   const canAttach = can(user, "attachment:add", withCol(t)) && t.status === "Activo";
@@ -623,14 +626,15 @@ function renderTicketDetail(t) {
         <span>Última actualización: ${fmtDateTime(t.updatedAt)}</span>
       </div>
 
-      ${canEdit || canClose || canCancel || isSuper || (t.status !== "Activo" && can(user, "ticket:edit", t)) ? `
+      ${canEdit || closeEligible || canCancel || isSuper || (t.status !== "Activo" && can(user, "ticket:edit", t)) ? `
         <div class="detail-actions">
           ${canEdit ? `<button class="btn btn-primary" id="tm-save">Guardar</button>` : ""}
-          ${canClose ? `<button class="btn btn-ghost" id="tm-close-ticket">Cerrar ticket</button>` : ""}
+          ${closeEligible ? `<button class="btn btn-ghost" id="tm-close-ticket" ${canClose ? "" : "disabled"}>Cerrar ticket</button>` : ""}
           ${canCancel ? `<button class="btn btn-ghost btn-danger-text" id="tm-cancel-ticket">Cancelar ticket</button>` : ""}
           ${t.status !== "Activo" && can(user, "ticket:edit", t) ? `<button class="btn btn-ghost" id="tm-reopen">Reabrir</button>` : ""}
           ${isSuper ? `<button class="btn btn-danger" id="tm-delete">Eliminar</button>` : ""}
-        </div>` : ""}
+        </div>
+        ${detail.closeGated ? `<p class="text-muted" id="tm-close-note">Adjunta evidencia del envío (foto o PDF) para poder cerrar.</p>` : ""}` : ""}
 
       <section class="detail-section">
         <h3>Comentarios</h3>
@@ -1038,6 +1042,16 @@ function renderAttachments(ticket, attachments) {
   const box = $("#tm-attachments");
   if (!box) return;
   const user = store.currentUser;
+
+  // Refresca el botón "Cerrar ticket" cuando el cierre depende de la evidencia
+  // (Almacén en "Listos para recolección"): se habilita al haber ≥1 adjunto.
+  if (detail.closeGated) {
+    const btn = $("#tm-close-ticket");
+    const note = $("#tm-close-note");
+    const hasEvidence = attachments.length > 0;
+    if (btn) btn.disabled = !hasEvidence;
+    if (note) note.classList.toggle("hidden", hasEvidence);
+  }
 
   if (!attachments.length) {
     box.innerHTML = `<p class="text-muted">Sin adjuntos.</p>`;

@@ -237,14 +237,14 @@ async function renderStepTimes() {
 
     // Mostramos las etapas en orden de flujo; "—" si aún no hay datos.
     box.innerHTML = `
-      <div class="dash-card">
+      <div class="dash-card steptime-list">
         ${STEP_PHASES.map((phase) => {
           const a = agg[phase];
           const avg = a ? fmtCountdown(a.ms / a.count) : "—";
           return `
-            <div class="bar-row breach-row">
-              <span class="bar-label" title="${escapeHtml(phase)}">${escapeHtml(phase)}</span>
-              <span class="bar-value bar-value-wide">${a ? `prom. ${avg} · ${a.count} ticket(s)` : "Sin datos aún"}</span>
+            <div class="steptime-row">
+              <span class="steptime-label">${escapeHtml(phase)}</span>
+              <span class="steptime-val">${a ? `prom. ${avg} · ${a.count} ticket(s)` : "Sin datos aún"}</span>
             </div>`;
         }).join("")}
       </div>`;

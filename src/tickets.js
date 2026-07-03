@@ -285,6 +285,7 @@ export async function setShippingCost(ticket, cost) {
   // Atraso (en tiempo hábil) si se cotizó fuera del SLA de Cotización.
   const entered = toDate(ticket.lastMovedAt)?.getTime() ?? toDate(ticket.createdAt)?.getTime() ?? Date.now();
   const quoteDeadline = addBusinessMs(entered, durationToMs(getSla().quote)).getTime();
+  // Atraso: solo el tiempo hábil VENCIDO (lo que excede el SLA). 0 si no venció.
   recordBreach(ticket, "Cotización de envío", businessMsBetween(quoteDeadline, Date.now()));
   recordStepTime(ticket, "Cotización de envío");
 

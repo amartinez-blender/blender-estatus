@@ -361,8 +361,10 @@ textarea.input { resize: vertical; }
   display: flex; align-items: center; gap: 8px; padding: 9px 12px;
   background: none; border: none; cursor: pointer;
   font-family: var(--font); font-size: 0.85rem; text-align: left;
+  color: var(--color-text); /* los <button> no heredan color: legible en modo oscuro */
 }
 .mention-option:hover { background: var(--color-yellow-soft); }
+html[data-theme="dark"] .mention-option:hover { background: #2B2710; color: var(--color-text); }
 
 /* Adjuntos */
 .attach-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
@@ -768,7 +770,7 @@ html[data-theme="dark"] .notif-item.is-unread { background: #2B2710; }
   padding: 9px 0; border-bottom: 1px dashed var(--color-border);
 }
 .steptime-row:last-child { border-bottom: none; }
-.steptime-label { font-size: 0.85rem; font-weight: 600; flex: 1; min-width: 0; }
+.steptime-label { font-size: 0.85rem; font-weight: 600; flex: 1; min-width: 0; white-space: normal; overflow-wrap: anywhere; }
 .steptime-val { color: var(--color-text-muted); font-size: 0.8rem; text-align: right; white-space: nowrap; }
 @media (max-width: 480px) {
   .steptime-row { flex-direction: column; gap: 2px; }
