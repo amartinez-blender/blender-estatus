@@ -123,9 +123,9 @@ service cloud.firestore {
         && d.columnId is string && d.columnId.size() > 0
         && d.ownerId is string && d.ownerId.size() > 0
         && (d.priority == null || d.priority in ['Baja', 'Media', 'Alta', 'Urgente'])
-        && (!('tipoPago' in d) || d.tipoPago == null || d.tipoPago in ['Contado', 'Crédito'])
+        && (!('tipoPago' in d) || d.tipoPago == null || d.tipoPago in ['Contado', 'Crédito', 'Pedido Autorizado'])
         && (!('paymentConfirmed' in d) || d.paymentConfirmed is bool)
-        && (!('paymentMethod' in d) || d.paymentMethod == null || d.paymentMethod in ['Transferencia', 'Crédito'])
+        && (!('paymentMethod' in d) || d.paymentMethod == null || d.paymentMethod in ['Transferencia', 'Crédito', 'TDC', 'TDD', 'Nota de Crédito', 'Efectivo'])
         && (!('pedidoNumber' in d) || d.pedidoNumber == null || d.pedidoNumber is string)
         && d.addressNA is bool
         && d.shippingAddress is string && d.shippingAddress.size() <= 500
