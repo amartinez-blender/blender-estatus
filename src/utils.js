@@ -6,8 +6,8 @@ export const SHIPPING_TYPES = ["Recolección", "Envío por cobrar", "Envío pre-
 export const DELIVERY_MODES = ["Domicilio", "Ocurre", "Recolección"];
 // Modalidades válidas cuando NO es Recolección (req. 9: sin "Recolección").
 export const DELIVERY_MODES_SHIPPING = ["Domicilio", "Ocurre"];
-export const PAYMENT_TYPES = ["Contado", "Crédito"];      // Tipo de pago (lo fija el Ejecutivo al crear)
-export const PAYMENT_METHODS = ["Transferencia", "Crédito"]; // Forma de pago (la fija Administración al confirmar)
+export const PAYMENT_TYPES = ["Contado", "Crédito", "Pedido Autorizado"]; // Tipo de pago (lo fija el Ejecutivo al crear)
+export const PAYMENT_METHODS = ["Transferencia", "Crédito", "TDC", "TDD", "Nota de Crédito", "Efectivo"]; // Forma de pago (la fija Administración al confirmar)
 
 // Tipos de envío que envían el ticket a la columna de cotización.
 export const QUOTE_SHIPPING_TYPES = ["Envío por cobrar", "Envío pre-pagado"];
@@ -158,8 +158,10 @@ export function mainOrderNumber(t) {
 }
 
 // Etiqueta principal: "Pedido: X" si ya hay # de pedido, si no "Cotización: X".
+// Incluye el nombre del cliente cuando existe (visible en tarjeta, detalle y notificaciones).
 export function orderRef(t) {
-  return (t && t.pedidoNumber) ? `Pedido: ${t.pedidoNumber}` : `Cotización: ${t?.orderNumber}`;
+  const base = (t && t.pedidoNumber) ? `Pedido: ${t.pedidoNumber}` : `Cotización: ${t?.orderNumber}`;
+  return t?.client ? `${base} · ${t.client}` : base;
 }
 
 // ===================== Varios =====================
@@ -198,6 +200,8 @@ export function validateTicketData(data) {
   if (!data.orderNumber) errors.push("El número de cotización es obligatorio.");
   else if (!validateOrderNumber(data.orderNumber))
     errors.push("El número de cotización debe ser solo numérico, máximo 5 dígitos.");
+  if (!data.client || !String(data.client).trim()) errors.push("El nombre del cliente es obligatorio.");
+  else if (String(data.client).trim().length > 200) errors.push("El nombre del cliente no puede exceder 200 caracteres.");
   if (!TREATMENTS.includes(data.treatment)) errors.push("Selecciona el tratamiento del pedido.");
   if (!SHIPPING_TYPES.includes(data.shippingType)) errors.push("Selecciona el tipo de envío.");
   if (!DELIVERY_MODES.includes(data.deliveryMode)) errors.push("Selecciona la modalidad de entrega.");
@@ -208,7 +212,7 @@ export function validateTicketData(data) {
       errors.push(`La dirección no puede exceder ${MAX_ADDRESS_LENGTH} caracteres.`);
   }
   if (data.priority && !PRIORITIES.includes(data.priority)) errors.push("Prioridad inválida.");
-  if (!PAYMENT_TYPES.includes(data.tipoPago)) errors.push("Selecciona el tipo de pago (Contado o Crédito).");
+  if (!PAYMENT_TYPES.includes(data.tipoPago)) errors.push("Selecciona el tipo de pago.");
   if (!data.columnId) errors.push("Selecciona una columna.");
   return errors;
 }

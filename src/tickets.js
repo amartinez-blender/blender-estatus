@@ -88,6 +88,7 @@ export async function createTicket(data) {
   });
   batch.set(ticketRef, {
     orderNumber: String(data.orderNumber),
+    client: String(data.client || "").trim(), // Nombre del cliente (obligatorio, lo fija Ventas)
     title: data.title || `Pedido ${data.orderNumber}`,
     treatment: data.treatment,
     shippingType: data.shippingType,
@@ -127,7 +128,7 @@ export async function createTicket(data) {
 
   await logActivity(ticketRef.id, "created", `${user.displayName} creó el ticket.`);
   // Notifica por rol según la columna a la que cayó el ticket (routing).
-  await notifyColumnEntry({ id: ticketRef.id, orderNumber: String(data.orderNumber), ownerId: data.ownerId || user.uid },
+  await notifyColumnEntry({ id: ticketRef.id, orderNumber: String(data.orderNumber), client: String(data.client || "").trim(), ownerId: data.ownerId || user.uid },
     columnName(data.columnId));
   return ticketRef.id;
 }
@@ -135,6 +136,7 @@ export async function createTicket(data) {
 // Campos editables y su etiqueta para el historial.
 const EDITABLE_LABELS = {
   title: "título",
+  client: "cliente",
   treatment: "tratamiento",
   shippingType: "tipo de envío",
   deliveryMode: "modalidad de entrega",

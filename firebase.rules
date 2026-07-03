@@ -116,6 +116,7 @@ service cloud.firestore {
 
     function isValidTicket(d) {
       return d.orderNumber is string && d.orderNumber.matches('^[0-9]{1,5}$')
+        && (!('client' in d) || (d.client is string && d.client.size() <= 200))
         && d.treatment in ['Fabricación', 'Almacén']
         && d.shippingType in ['Recolección', 'Envío por cobrar', 'Envío pre-pagado']
         && d.deliveryMode in ['Domicilio', 'Ocurre', 'Recolección']

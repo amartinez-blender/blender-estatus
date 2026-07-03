@@ -4,7 +4,7 @@ import {
   fb, collection, doc, addDoc, updateDoc, deleteDoc, onSnapshot, writeBatch, serverTimestamp,
 } from "./firebase.js";
 import { store, emit, escapeHtml, $, normalize,
-  QUOTE_SHIPPING_TYPES, ROUTING_COLUMN_NAMES } from "./utils.js";
+  ROUTING_COLUMN_NAMES } from "./utils.js";
 import { can } from "./permissions.js";
 import { toast, confirmDialog } from "./ui.js";
 
@@ -43,17 +43,16 @@ export function findColumnByName(name) {
 }
 
 // Routing automático al CREAR un ticket:
-//  - Recolección → columna "Administración" (todos pasan por Administración).
-//  - Envío por cobrar / pre-pagado → columna "Cotización de envío".
-// (Tras cotizar y confirmar el pago, Administración los manda a Fab/Almacén.)
+//  - Recolección → columna "Administración" (Confirmar Pago).
+//  - Envío por cobrar → columna "Administración" (el cliente paga el envío; no se cotiza).
+//  - Envío pre-pagado → columna "Cotización de envío" (Almacén cotiza el envío primero).
+// (Tras cotizar y/o confirmar el pago, Administración los manda a Fab/Almacén.)
 export function routeColumnId(treatment, shippingType, fallbackId = null) {
-  let targetName = null;
-  if (normalize(shippingType) === normalize("Recolección")) {
-    targetName = ROUTING_COLUMN_NAMES.ADMINISTRACION;
-  } else if (QUOTE_SHIPPING_TYPES.map(normalize).includes(normalize(shippingType))) {
-    targetName = ROUTING_COLUMN_NAMES.COTIZACION;
-  }
-  const col = targetName ? findColumnByName(targetName) : null;
+  // Solo el pre-pagado requiere cotizar el envío antes de Administración.
+  const targetName = normalize(shippingType) === normalize("Envío pre-pagado")
+    ? ROUTING_COLUMN_NAMES.COTIZACION
+    : ROUTING_COLUMN_NAMES.ADMINISTRACION;
+  const col = findColumnByName(targetName);
   return col?.id || fallbackId || activeColumns()[0]?.id || null;
 }
 
