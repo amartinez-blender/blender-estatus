@@ -525,10 +525,12 @@ function renderTicketDetail(t) {
   const user = store.currentUser;
   const canEdit = can(user, "ticket:edit", t) && t.status === "Activo";
   const canCancel = can(user, "ticket:cancel", t) && t.status === "Activo";
-  const canClose = can(user, "ticket:close", withCol(t)) && t.status === "Activo";
-  // "Elegible" para cerrar ignorando la evidencia (para mostrar el botón y refrescarlo al adjuntar).
+  // "Elegible" para cerrar (mostrar el botón) ignorando la evidencia.
   const closeEligible = can(user, "ticket:close", { ...withCol(t), attachmentsCount: 1 }) && t.status === "Activo";
-  detail.closeGated = closeEligible && !canClose; // Almacén en Listos sin evidencia aún
+  // Roles cuyo cierre EXIGE adjuntar evidencia (Almacén en "Listos para recolección"):
+  // al hacer clic en "Cerrar ticket" se pedirá el archivo (foto o PDF) y luego se cierra.
+  const closeNeedsEvidence = closeEligible
+    && !can(user, "ticket:close", { ...withCol(t), attachmentsCount: 0 });
   const canMove = can(user, "ticket:move", withCol(t)) && t.status === "Activo";
   const canComment = can(user, "comment:create", t); // todos pueden comentar, en cualquier etapa
   const canAttach = can(user, "attachment:add", withCol(t)) && t.status === "Activo";
@@ -629,12 +631,12 @@ function renderTicketDetail(t) {
       ${canEdit || closeEligible || canCancel || isSuper || (t.status !== "Activo" && can(user, "ticket:edit", t)) ? `
         <div class="detail-actions">
           ${canEdit ? `<button class="btn btn-primary" id="tm-save">Guardar</button>` : ""}
-          ${closeEligible ? `<button class="btn btn-ghost" id="tm-close-ticket" ${canClose ? "" : "disabled"}>Cerrar ticket</button>` : ""}
+          ${closeEligible ? `<button class="btn btn-ghost" id="tm-close-ticket">Cerrar ticket</button>` : ""}
           ${canCancel ? `<button class="btn btn-ghost btn-danger-text" id="tm-cancel-ticket">Cancelar ticket</button>` : ""}
           ${t.status !== "Activo" && can(user, "ticket:edit", t) ? `<button class="btn btn-ghost" id="tm-reopen">Reabrir</button>` : ""}
           ${isSuper ? `<button class="btn btn-danger" id="tm-delete">Eliminar</button>` : ""}
         </div>
-        ${detail.closeGated ? `<p class="text-muted" id="tm-close-note">Adjunta evidencia del envío (foto o PDF) para poder cerrar.</p>` : ""}` : ""}
+        ${closeNeedsEvidence ? `<p class="text-muted" id="tm-close-note">Al cerrar se te pedirá adjuntar evidencia del envío (foto o PDF).</p>` : ""}` : ""}
 
       <section class="detail-section">
         <h3>Comentarios</h3>
@@ -657,7 +659,7 @@ function renderTicketDetail(t) {
               📎 Subir archivo
               <input type="file" id="tm-file" accept="image/jpeg,image/png,image/webp,application/pdf" hidden>
             </label>
-            <label class="btn btn-ghost only-mobile">
+            <label class="btn btn-ghost">
               📷 Tomar foto
               <input type="file" id="tm-camera" accept="image/*" capture="environment" hidden>
             </label>
@@ -674,7 +676,7 @@ function renderTicketDetail(t) {
       </section>
     </div>`;
 
-  bindDetailEvents(t, { canEdit, canComment, canAttach, canAssign, canPayType, isSuper });
+  bindDetailEvents(t, { canEdit, canComment, canAttach, canAssign, canPayType, isSuper, closeNeedsEvidence });
 }
 
 function bindDetailEvents(t, perms) {
@@ -881,7 +883,41 @@ function bindDetailEvents(t, perms) {
       }
     });
   };
-  statusAction("#tm-close-ticket", "Cerrado", "Cerrar", false);
+  if (perms.closeNeedsEvidence) {
+    // Almacén en "Listos para recolección": al cerrar se pide adjuntar evidencia
+    // (foto o PDF). Se sube el archivo y, ya con evidencia, se cierra el ticket.
+    $("#tm-close-ticket")?.addEventListener("click", async () => {
+      const ok = await confirmDialog({
+        title: "Cerrar ticket",
+        message: `Para cerrar el ticket #${mainOrderNumber(t)} debes adjuntar evidencia del envío (foto o PDF). ¿Continuar?`,
+        confirmText: "Adjuntar y cerrar",
+      });
+      if (!ok) return;
+      const input = document.createElement("input");
+      input.type = "file";
+      input.accept = "image/jpeg,image/png,image/webp,application/pdf";
+      input.onchange = async () => {
+        const file = input.files && input.files[0];
+        if (!file) return;
+        const btn = $("#tm-close-ticket");
+        const prev = btn ? btn.textContent : "";
+        if (btn) { btn.disabled = true; btn.textContent = "Subiendo evidencia…"; }
+        try {
+          await uploadAttachment(t, file, () => {});
+          await setTicketStatus(t, "Cerrado");
+          toast("Ticket cerrado con evidencia.", "success");
+          closeModal("ticket-modal");
+          closeDetailListeners();
+        } catch (err) {
+          toast("No se pudo cerrar: " + err.message, "error");
+          if (btn) { btn.disabled = false; btn.textContent = prev; }
+        }
+      };
+      input.click();
+    });
+  } else {
+    statusAction("#tm-close-ticket", "Cerrado", "Cerrar", false);
+  }
   statusAction("#tm-cancel-ticket", "Cancelado", "Cancelar", true);
   statusAction("#tm-reopen", "Activo", "Reabrir", false);
 
@@ -1042,16 +1078,6 @@ function renderAttachments(ticket, attachments) {
   const box = $("#tm-attachments");
   if (!box) return;
   const user = store.currentUser;
-
-  // Refresca el botón "Cerrar ticket" cuando el cierre depende de la evidencia
-  // (Almacén en "Listos para recolección"): se habilita al haber ≥1 adjunto.
-  if (detail.closeGated) {
-    const btn = $("#tm-close-ticket");
-    const note = $("#tm-close-note");
-    const hasEvidence = attachments.length > 0;
-    if (btn) btn.disabled = !hasEvidence;
-    if (note) note.classList.toggle("hidden", hasEvidence);
-  }
 
   if (!attachments.length) {
     box.innerHTML = `<p class="text-muted">Sin adjuntos.</p>`;
