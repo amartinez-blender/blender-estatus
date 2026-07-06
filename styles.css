@@ -123,6 +123,8 @@ code { background: var(--color-border); padding: 1px 6px; border-radius: 6px; fo
 .input:focus { border-color: var(--color-black); outline: none; }
 .input:disabled { background: var(--color-bg); color: var(--color-text-muted); }
 .input-sm { padding: 7px 10px; font-size: 0.85rem; width: auto; }
+.board-search { min-width: 300px; flex: 0 1 340px; }
+@media (max-width: 680px) { .board-search { min-width: 0; flex: 1 1 100%; } }
 textarea.input { resize: vertical; }
 
 .field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 12px; }

@@ -128,6 +128,7 @@ service cloud.firestore {
         && (!('paymentConfirmed' in d) || d.paymentConfirmed is bool)
         && (!('paymentMethod' in d) || d.paymentMethod == null || d.paymentMethod in ['Transferencia', 'Crédito', 'TDC', 'TDD', 'Nota de Crédito', 'Efectivo'])
         && (!('pedidoNumber' in d) || d.pedidoNumber == null || d.pedidoNumber is string)
+        && (!('shippedAt' in d) || d.shippedAt == null || d.shippedAt is string)
         && d.addressNA is bool
         && d.shippingAddress is string && d.shippingAddress.size() <= 500
         && (d.addressNA == true || d.shippingAddress.size() > 0);
@@ -178,9 +179,10 @@ service cloud.firestore {
       function onlyAddPedido() {
         return changedKeys().hasOnly(['pedidoNumber', 'columnId', 'lastMovedAt', 'updatedAt']);
       }
-      // Almacén cierra en "Listos para recolección" (solo cambia el estatus a Cerrado).
+      // Almacén cierra en "Listos para recolección": cambia el estatus a Cerrado
+      // y registra la Fecha y Hora de Envío (shippedAt).
       function onlyCloseByWarehouse() {
-        return changedKeys().hasOnly(['status', 'updatedAt'])
+        return changedKeys().hasOnly(['status', 'shippedAt', 'updatedAt'])
           && request.resource.data.status == 'Cerrado';
       }
 

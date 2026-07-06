@@ -11,7 +11,8 @@ import { renderVendorFilter, vendorFilterMatch } from "./filters.js";
 import { computeSla, isFabricacionColumn, isAlmacenColumn, isCotizacionColumn, isCotizacionListaColumn, isAdministracionColumn, isAgregarPedidoColumn } from "./sla.js";
 import { getTicket, createTicket, updateTicket, moveTicket, setTicketStatus, deleteTicket,
   setProductionPromise, setWarehousePromise, setShippingCost,
-  acceptShippingCost, markShippingPaid, rejectShippingCost, confirmPayment, addPedido } from "./tickets.js";
+  acceptShippingCost, markShippingPaid, rejectShippingCost, confirmPayment, addPedido,
+  closeByWarehouseWithShipping } from "./tickets.js";
 import { getUser, userName, sellableUsers } from "./users.js";
 import { listenComments, addComment, editComment, softDeleteComment, mentionSuggestions, highlightMentions } from "./comments.js";
 import { listenAttachments, uploadAttachment, deleteAttachment, isImage } from "./attachments.js";
@@ -61,9 +62,10 @@ function renderBoardColumns() {
     })
     .filter((t) => {
       if (!search) return true;
-      // Busca por # de cotización (orderNumber) o # de pedido (pedidoNumber).
+      // Busca por # de cotización, # de pedido o nombre del cliente.
       return String(t.orderNumber || "").toLowerCase().includes(search) ||
-        String(t.pedidoNumber || "").toLowerCase().includes(search);
+        String(t.pedidoNumber || "").toLowerCase().includes(search) ||
+        String(t.client || "").toLowerCase().includes(search);
     });
 
   container.innerHTML = cols.map((col) => {
@@ -636,6 +638,7 @@ function renderTicketDetail(t) {
       <div class="detail-meta text-muted">
         <span>Creado por <strong>${escapeHtml(userName(t.createdBy))}</strong> · ${fmtDateTime(t.createdAt)}</span>
         <span>Responsable: <strong>${escapeHtml(userName(t.ownerId))}</strong></span>
+        ${t.shippedAt ? `<span>Fecha y hora de envío: <strong>${fmtDateTime(t.shippedAt)}</strong></span>` : ""}
         <span>Última actualización: ${fmtDateTime(t.updatedAt)}</span>
       </div>
 
@@ -647,7 +650,7 @@ function renderTicketDetail(t) {
           ${t.status !== "Activo" && can(user, "ticket:edit", t) ? `<button class="btn btn-ghost" id="tm-reopen">Reabrir</button>` : ""}
           ${isSuper ? `<button class="btn btn-danger" id="tm-delete">Eliminar</button>` : ""}
         </div>
-        ${closeNeedsEvidence ? `<p class="text-muted" id="tm-close-note">Al cerrar se te pedirá adjuntar evidencia del envío (foto o PDF).</p>` : ""}` : ""}
+        ${closeNeedsEvidence ? `<p class="text-muted" id="tm-close-note">Al cerrar se te pedirá la Fecha y Hora de Envío y la foto de evidencia.</p>` : ""}` : ""}
 
       <section class="detail-section">
         <h3>Comentarios</h3>
@@ -896,36 +899,25 @@ function bindDetailEvents(t, perms) {
     });
   };
   if (perms.closeNeedsEvidence) {
-    // Almacén en "Listos para recolección": al cerrar se pide adjuntar evidencia
-    // (foto o PDF). Se sube el archivo y, ya con evidencia, se cierra el ticket.
+    // Almacén en "Listos para recolección": al cerrar se pide la Fecha y Hora de
+    // Envío + la foto de evidencia. Se sube el archivo y luego se cierra el ticket
+    // (esto notifica al Responsable y a los Administradores de Ventas).
     $("#tm-close-ticket")?.addEventListener("click", async () => {
-      const ok = await confirmDialog({
-        title: "Cerrar ticket",
-        message: `Para cerrar el ticket #${mainOrderNumber(t)} debes adjuntar evidencia del envío (foto o PDF). ¿Continuar?`,
-        confirmText: "Adjuntar y cerrar",
-      });
-      if (!ok) return;
-      const input = document.createElement("input");
-      input.type = "file";
-      input.accept = "image/jpeg,image/png,image/webp,application/pdf";
-      input.onchange = async () => {
-        const file = input.files && input.files[0];
-        if (!file) return;
-        const btn = $("#tm-close-ticket");
-        const prev = btn ? btn.textContent : "";
-        if (btn) { btn.disabled = true; btn.textContent = "Subiendo evidencia…"; }
-        try {
-          await uploadAttachment(t, file, () => {});
-          await setTicketStatus(t, "Cerrado");
-          toast("Ticket cerrado con evidencia.", "success");
-          closeModal("ticket-modal");
-          closeDetailListeners();
-        } catch (err) {
-          toast("No se pudo cerrar: " + err.message, "error");
-          if (btn) { btn.disabled = false; btn.textContent = prev; }
-        }
-      };
-      input.click();
+      const res = await shippingCloseDialog(t);
+      if (!res) return;
+      const btn = $("#tm-close-ticket");
+      const prev = btn ? btn.textContent : "";
+      if (btn) { btn.disabled = true; btn.textContent = "Cerrando…"; }
+      try {
+        await uploadAttachment(t, res.file, () => {});
+        await closeByWarehouseWithShipping(t, res.shippedAt);
+        toast("Ticket cerrado con evidencia de envío.", "success");
+        closeModal("ticket-modal");
+        closeDetailListeners();
+      } catch (err) {
+        toast("No se pudo cerrar: " + err.message, "error");
+        if (btn) { btn.disabled = false; btn.textContent = prev; }
+      }
     });
   } else {
     statusAction("#tm-close-ticket", "Cerrado", "Cerrar", false);
@@ -989,6 +981,73 @@ function bindDetailEvents(t, perms) {
     $("#tm-file").addEventListener("change", (e) => handleFile(e.target.files[0]));
     $("#tm-camera")?.addEventListener("change", (e) => handleFile(e.target.files[0]));
   }
+}
+
+// Diálogo de cierre por Almacén: pide Fecha y Hora de Envío + foto de evidencia.
+// Resuelve con { shippedAt, file } o null si se cancela.
+function shippingCloseDialog(t) {
+  return new Promise((resolve) => {
+    const now = new Date();
+    const pad = (n) => String(n).padStart(2, "0");
+    const localNow = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
+
+    const modal = document.createElement("div");
+    modal.className = "modal modal-top open";
+    modal.innerHTML = `
+      <div class="modal-card modal-card-sm">
+        <header class="modal-header">
+          <h2>Cerrar ticket · Envío</h2>
+          <button class="btn btn-icon" data-x aria-label="Cerrar">✕</button>
+        </header>
+        <div class="modal-body">
+          <p class="text-muted">Ticket ${escapeHtml(orderRef(t))}. Registra el envío para cerrar.</p>
+          <div class="form-errors hidden" id="sc-errors"></div>
+          <label class="field">
+            <span>Fecha y hora de envío *</span>
+            <input class="input" id="sc-datetime" type="datetime-local" value="${localNow}" required>
+          </label>
+          <label class="field">
+            <span>Foto de evidencia *</span>
+            <div class="attach-controls">
+              <label class="btn btn-ghost">📎 Subir archivo
+                <input type="file" id="sc-file" accept="image/jpeg,image/png,image/webp,application/pdf" hidden></label>
+              <label class="btn btn-ghost">📷 Tomar foto
+                <input type="file" id="sc-camera" accept="image/*" capture="environment" hidden></label>
+            </div>
+            <p class="text-muted" id="sc-filename">Ningún archivo seleccionado.</p>
+          </label>
+        </div>
+        <footer class="modal-footer">
+          <button type="button" class="btn btn-ghost" data-x>Cancelar</button>
+          <button type="button" class="btn btn-primary" id="sc-confirm">Cerrar ticket</button>
+        </footer>
+      </div>`;
+    document.body.appendChild(modal);
+    document.body.classList.add("modal-open");
+
+    const q = (sel) => modal.querySelector(sel);
+    let file = null;
+    const nameEl = q("#sc-filename");
+    const setFile = (f) => { file = f || null; nameEl.textContent = file ? file.name : "Ningún archivo seleccionado."; };
+    q("#sc-file").addEventListener("change", (e) => setFile(e.target.files[0]));
+    q("#sc-camera").addEventListener("change", (e) => setFile(e.target.files[0]));
+
+    const cleanup = (result) => {
+      modal.remove();
+      if (!document.querySelector(".modal.open")) document.body.classList.remove("modal-open");
+      resolve(result);
+    };
+    modal.querySelectorAll("[data-x]").forEach((b) => b.addEventListener("click", () => cleanup(null)));
+    modal.addEventListener("click", (e) => { if (e.target === modal) cleanup(null); });
+
+    q("#sc-confirm").addEventListener("click", () => {
+      const dt = q("#sc-datetime").value;
+      const err = q("#sc-errors");
+      if (!dt) { err.textContent = "Indica la fecha y hora de envío."; err.classList.remove("hidden"); return; }
+      if (!file) { err.textContent = "Adjunta la foto de evidencia del envío."; err.classList.remove("hidden"); return; }
+      cleanup({ shippedAt: dt, file });
+    });
+  });
 }
 
 // ---------- Autocompletado de menciones ----------
