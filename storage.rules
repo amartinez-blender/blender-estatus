@@ -15,7 +15,7 @@ service firebase.storage {
 
     function isDomainUser() {
       return request.auth != null
-        && request.auth.token.email.lower().matches('.*@blendergroup[.]com$');
+        && request.auth.token.email.lower().matches('.*@(blendergroup|blendershop)[.]com$');
     }
 
     function isAllowedType() {

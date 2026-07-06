@@ -9,7 +9,7 @@ service cloud.firestore {
 
     function isDomainUser() {
       return isSignedIn()
-        && request.auth.token.email.lower().matches('.*@blendergroup[.]com$');
+        && request.auth.token.email.lower().matches('.*@(blendergroup|blendershop)[.]com$');
     }
 
     function isConfiguredSuperAdmin() {
@@ -274,7 +274,12 @@ service cloud.firestore {
       match /activity/{activityId} {
         allow read: if canViewTicketData(parentTicket(ticketId));
 
-        allow create: if canOperateTicketData(parentTicket(ticketId))
+        allow create: if (
+            canOperateTicketData(parentTicket(ticketId))
+            // Almacén registra actividad al cerrar en "Listos para recolección"
+            // (aunque el tratamiento del pedido sea Fabricación).
+            || (hasRole('warehouse') && ticketColumnName(parentTicket(ticketId)) == 'Listos para recolección')
+          )
           && request.resource.data.actorId == request.auth.uid;
 
         allow update, delete: if false;

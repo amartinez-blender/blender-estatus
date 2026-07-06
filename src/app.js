@@ -317,7 +317,7 @@ function renderSettingsAdmin(container) {
       <p class="text-muted">Estos valores se definen en <code>src/config.js</code> y se reflejan en <code>firebase.rules</code>.</p>
       <ul class="settings-list">
         <li><strong>Nombre:</strong> ${escapeHtml(cfg.appName)}</li>
-        <li><strong>Dominio permitido:</strong> @${escapeHtml(cfg.allowedDomain)}</li>
+        <li><strong>Dominios permitidos:</strong> ${(cfg.allowedDomains || [cfg.allowedDomain]).map((d) => "@" + escapeHtml(d)).join(", ")}</li>
         <li><strong>SuperAdmins:</strong> ${cfg.superAdminEmails.map(escapeHtml).join(", ")}</li>
         <li><strong>Rol por defecto:</strong> ${escapeHtml(roleLabel(cfg.defaultRole))}</li>
         <li><strong>Modo demo:</strong> ${cfg.demoMode ? "Activado" : "Desactivado"}</li>

@@ -123,7 +123,7 @@ code { background: var(--color-border); padding: 1px 6px; border-radius: 6px; fo
 .input:focus { border-color: var(--color-black); outline: none; }
 .input:disabled { background: var(--color-bg); color: var(--color-text-muted); }
 .input-sm { padding: 7px 10px; font-size: 0.85rem; width: auto; }
-.board-search { min-width: 300px; flex: 0 1 340px; }
+.board-search { flex: 1 1 240px; min-width: 200px; }
 @media (max-width: 680px) { .board-search { min-width: 0; flex: 1 1 100%; } }
 textarea.input { resize: vertical; }
 
@@ -584,7 +584,15 @@ html[data-theme="dark"] .mention-option:hover { background: #2B2710; color: var(
 }
 
 /* ----- Refuerzo responsive (req. 8) ----- */
-.toolbar-actions { flex-wrap: wrap; }
+/* En escritorio, todo el toolbar del tablero queda en una sola fila. */
+.view-toolbar { flex-wrap: nowrap; }
+.toolbar-actions { flex-wrap: nowrap; flex: 1 1 auto; justify-content: flex-end; min-width: 0; }
+#btn-new-ticket { flex: 0 0 auto; white-space: nowrap; }
+/* En pantallas medianas/chicas sí se permite envolver. */
+@media (max-width: 980px) {
+  .view-toolbar { flex-wrap: wrap; }
+  .toolbar-actions { flex-wrap: wrap; justify-content: flex-start; }
+}
 
 @media (max-width: 719px) {
   /* En móvil la navegación vive en la barra inferior fija. */

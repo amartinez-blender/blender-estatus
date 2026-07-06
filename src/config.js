@@ -20,7 +20,9 @@ export const firebaseConfig = {
 export const APP_CONFIG = {
   appName: "Blender Estatus",
 
-  // Solo correos de este dominio pueden iniciar sesión.
+  // Solo correos de estos dominios pueden iniciar sesión.
+  allowedDomains: ["blendergroup.com", "blendershop.com"],
+  // (Compat) primer dominio; se mantiene por si algún módulo lo usa.
   allowedDomain: "blendergroup.com",
 
   // Correos que reciben rol SuperAdmin automáticamente al iniciar sesión.

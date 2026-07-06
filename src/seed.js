@@ -58,6 +58,7 @@ export async function ensureSeed() {
       await setDoc(settingsRef, {
         appName: cfg.appName,
         allowedDomain: cfg.allowedDomain,
+        allowedDomains: cfg.allowedDomains || [cfg.allowedDomain],
         superAdminEmails: cfg.superAdminEmails,
         createdAt: serverTimestamp(),
       });

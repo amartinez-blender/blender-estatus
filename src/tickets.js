@@ -241,30 +241,38 @@ export async function setTicketStatus(ticket, status) {
 // Responsable del ticket y a los Administradores de Ventas (in-app + Google Chat).
 export async function closeByWarehouseWithShipping(ticket, shippedAt) {
   const user = store.currentUser;
+  // La acción crítica es el cambio de estatus. Debe completarse sí o sí.
   await updateDoc(doc(fb.db, "tickets", ticket.id), {
     status: "Cerrado",
     shippedAt: shippedAt || null, // Fecha y Hora de Envío (ISO local string)
     updatedAt: serverTimestamp(),
   });
-  await logActivity(ticket.id, "status_changed",
-    `${user.displayName} cerró el ticket. Fecha y hora de envío: ${fmtDateTime(shippedAt)}. Evidencia adjunta.`);
 
-  const salesAdmins = store.users
-    .filter((u) => u.role === ROLES.SALES_ADMIN && u.active !== false)
-    .map((u) => u.uid || u.id);
-  const targets = [...new Set([ticket.ownerId, ...salesAdmins].filter(Boolean))];
-  await notifyUsers(targets, {
-    ticketId: ticket.id, type: "updated",
-    title: orderRef(ticket),
-    message: `Ticket cerrado por Almacén. Fecha y hora de envío: ${fmtDateTime(shippedAt)}.`,
-  });
+  // Log y notificaciones son best-effort: si algo falla, el ticket ya quedó cerrado
+  // y no debe mostrarse "permisos insuficientes" por un paso secundario.
+  try {
+    await logActivity(ticket.id, "status_changed",
+      `${user.displayName} cerró el ticket. Fecha y hora de envío: ${fmtDateTime(shippedAt)}. Evidencia adjunta.`);
 
-  const ownerU = store.users.find((x) => (x.uid || x.id) === ticket.ownerId);
-  const ownerMention = ownerU?.chatUserId ? `<users/${ownerU.chatUserId}>` : `@${ownerU?.displayName || userName(ticket.ownerId)}`;
-  const mentions = [...new Set([ownerMention, ...roleMentions(ROLES.SALES_ADMIN).split(" ").filter(Boolean)])].join(" ");
-  await sendGoogleChat(
-    `✅ *${orderRef(ticket)}* cerrado por Almacén. Envío: ${fmtDateTime(shippedAt)}. ${mentions}`.trim()
-  );
+    const salesAdmins = store.users
+      .filter((u) => u.role === ROLES.SALES_ADMIN && u.active !== false)
+      .map((u) => u.uid || u.id);
+    const targets = [...new Set([ticket.ownerId, ...salesAdmins].filter(Boolean))];
+    await notifyUsers(targets, {
+      ticketId: ticket.id, type: "updated",
+      title: orderRef(ticket),
+      message: `Ticket cerrado por Almacén. Fecha y hora de envío: ${fmtDateTime(shippedAt)}.`,
+    });
+
+    const ownerU = store.users.find((x) => (x.uid || x.id) === ticket.ownerId);
+    const ownerMention = ownerU?.chatUserId ? `<users/${ownerU.chatUserId}>` : `@${ownerU?.displayName || userName(ticket.ownerId)}`;
+    const mentions = [...new Set([ownerMention, ...roleMentions(ROLES.SALES_ADMIN).split(" ").filter(Boolean)])].join(" ");
+    await sendGoogleChat(
+      `✅ *${orderRef(ticket)}* cerrado por Almacén. Envío: ${fmtDateTime(shippedAt)}. ${mentions}`.trim()
+    );
+  } catch (err) {
+    console.warn("[cierre Almacén] Ticket cerrado, pero falló un paso secundario:", err);
+  }
 }
 
 // "Fecha y Hora en Almacén" — la asigna Producción (req. 1). ISO local string.

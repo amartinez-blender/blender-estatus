@@ -7,7 +7,16 @@ import {
 import { store, emit } from "./utils.js";
 import { ROLES } from "./roles.js";
 
-export const ACCESS_DENIED_MESSAGE = "Acceso restringido a usuarios de Blender Group.";
+export const ACCESS_DENIED_MESSAGE = "Acceso restringido a usuarios de Blender (blendergroup.com o blendershop.com).";
+
+// Lista de dominios permitidos (en minúsculas). Soporta `allowedDomains` (array)
+// y hace fallback a `allowedDomain` (string) por compatibilidad.
+export function allowedDomains(appCfg = store.config?.app || {}) {
+  const list = Array.isArray(appCfg.allowedDomains) && appCfg.allowedDomains.length
+    ? appCfg.allowedDomains
+    : (appCfg.allowedDomain ? [appCfg.allowedDomain] : []);
+  return list.map((d) => String(d).toLowerCase());
+}
 
 // callbacks: { onSignedOut, onDomainRejected, onUserReady, onError }
 export function initAuth(callbacks) {
@@ -22,7 +31,7 @@ export function initAuth(callbacks) {
 
     const appCfg = store.config.app;
     const domain = (authUser.email || "").split("@")[1] || "";
-    if (domain.toLowerCase() !== appCfg.allowedDomain.toLowerCase()) {
+    if (!allowedDomains(appCfg).includes(domain.toLowerCase())) {
       await signOut(fb.auth);
       callbacks.onDomainRejected(ACCESS_DENIED_MESSAGE);
       return;
@@ -95,10 +104,12 @@ function stopUserListener() {
 
 export async function login() {
   const provider = new GoogleAuthProvider();
-  provider.setCustomParameters({
-    prompt: "select_account",
-    hd: store.config.app.allowedDomain, // sugiere el dominio en el selector de Google
-  });
+  const params = { prompt: "select_account" };
+  // El parámetro `hd` restringe el selector a UN solo dominio; solo lo usamos si
+  // hay exactamente uno permitido. Con varios, lo omitimos para no bloquearlos.
+  const domains = allowedDomains();
+  if (domains.length === 1) params.hd = domains[0];
+  provider.setCustomParameters(params);
   await signInWithPopup(fb.auth, provider);
 }
 
