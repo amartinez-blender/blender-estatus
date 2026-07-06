@@ -223,6 +223,9 @@ service cloud.firestore {
               && resource.data.attachmentsCount > 0)
           || (hasRole('administration') && onlyConfirmPayment())
           || (canOperateTicketData(resource.data) && onlyCounterFields())
+          // Almacén adjunta evidencia en "Listos para recolección" (aunque el
+          // tratamiento sea Fabricación): puede incrementar el contador de adjuntos.
+          || (hasRole('warehouse') && ticketColumnName(resource.data) == 'Listos para recolección' && onlyCounterFields())
         );
 
       allow delete: if isSuper();
