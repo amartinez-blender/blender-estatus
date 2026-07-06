@@ -13,7 +13,7 @@ import {
   onSnapshot, serverTimestamp, writeBatch,
 } from "./firebase.js";
 import { store, emit, validateTicketData, toDate, fmtDateTime, fmtMoney, normalize, durationToMs,
-  orderRef, ROUTING_COLUMN_NAMES, QUOTE_SHIPPING_TYPES } from "./utils.js";
+  orderRef, ROUTING_COLUMN_NAMES, QUOTE_SHIPPING_TYPES, PAYMENT_METHODS } from "./utils.js";
 import { ROLES, ROLE_TREATMENT } from "./roles.js";
 import { logActivity } from "./activity.js";
 import { notifyUsers, notifyRole } from "./notifications.js";
@@ -531,8 +531,8 @@ export async function rejectShippingCost(ticket) {
 export async function confirmPayment(ticket, paymentMethod) {
   const user = store.currentUser;
   const method = String(paymentMethod || "").trim();
-  if (!["Transferencia", "Crédito"].includes(method)) {
-    throw new Error("Selecciona el tipo de pago (Transferencia o Crédito).");
+  if (!PAYMENT_METHODS.includes(method)) {
+    throw new Error("Selecciona una forma de pago válida.");
   }
 
   // Atraso (en tiempo hábil) si se confirmó fuera del SLA de Administración.
