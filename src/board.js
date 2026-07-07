@@ -908,9 +908,21 @@ function bindDetailEvents(t, perms) {
       const btn = $("#tm-close-ticket");
       const prev = btn ? btn.textContent : "";
       if (btn) { btn.disabled = true; btn.textContent = "Cerrando…"; }
+      // Paso 1: subir la evidencia. Paso 2: cerrar. Mensajes separados para saber
+      // exactamente qué paso falla si hubiera un problema de permisos.
       try {
-        await uploadAttachment(t, res.file, () => {});
-        await closeByWarehouseWithShipping(t, res.shippedAt);
+        try {
+          await uploadAttachment(t, res.file, () => {});
+        } catch (err) {
+          console.error("[cierre Almacén] Falló SUBIR EVIDENCIA:", err);
+          throw new Error("no se pudo subir la evidencia (" + err.message + ")");
+        }
+        try {
+          await closeByWarehouseWithShipping(t, res.shippedAt);
+        } catch (err) {
+          console.error("[cierre Almacén] Falló CAMBIAR ESTATUS:", err);
+          throw new Error("no se pudo cambiar el estatus (" + err.message + ")");
+        }
         toast("Ticket cerrado con evidencia de envío.", "success");
         closeModal("ticket-modal");
         closeDetailListeners();

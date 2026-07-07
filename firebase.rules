@@ -102,7 +102,12 @@ service cloud.firestore {
         || hasRole('administration')
         || (hasRole('sales_exec') && (t.ownerId == request.auth.uid || t.createdBy == request.auth.uid))
         || (hasRole('production') && t.treatment == 'Fabricación')
-        || (hasRole('warehouse') && t.treatment == 'Almacén');
+        // Almacén opera por TRATAMIENTO (sus pedidos) y por COLUMNA (las etapas que
+        // atiende: cotización de envío y listos), sin importar el tratamiento.
+        || (hasRole('warehouse') && (
+              t.treatment == 'Almacén'
+              || ticketColumnName(t) in ['Cotización de envío', 'Cotización de envío lista', 'Listos para recolección']
+            ));
     }
 
     function parentTicket(ticketId) {
@@ -192,40 +197,51 @@ service cloud.firestore {
         && isValidTicket(request.resource.data)
         && request.resource.data.createdBy == request.auth.uid;
 
-      allow update: if isValidTicket(request.resource.data)
-        && request.resource.data.orderNumber == resource.data.orderNumber
-        && request.resource.data.createdBy == resource.data.createdBy
-        && (
-          isSuper()
-          || hasRole('sales_admin')
-          || (
-            hasRole('sales_exec')
-            && (resource.data.ownerId == request.auth.uid || resource.data.createdBy == request.auth.uid)
-            && request.resource.data.columnId == resource.data.columnId
+      // ── Ruta dedicada de Almacén en "Listos para recolección" ──
+      // Cierre + incremento del contador de adjuntos. Es AUTÓNOMA: no re-valida todo
+      // el ticket (isValidTicket) ni depende de campos heredados, así funciona en
+      // CUALQUIER ticket —viejo o nuevo, de cualquier tratamiento—.
+      // `onlyCloseByWarehouse`/`onlyCounterFields` ya restringen qué campos cambian.
+      // La evidencia se exige y se sube en el cliente; NO se gatea el cierre con el
+      // contador (evita fallos si el incremento del contador no alcanzó a persistir).
+      allow update: if (
+          hasRole('warehouse')
+          && ticketColumnName(resource.data) == 'Listos para recolección'
+          && (
+            onlyCounterFields()
+            || onlyCloseByWarehouse()
           )
-          || (
-            hasRole('sales_exec') && resource.data.createdBy == request.auth.uid
-            && (onlyCostDecisionMove() || onlyAcceptFlag() || onlyRejectMove())
+        )
+        || (
+          isValidTicket(request.resource.data)
+          && request.resource.data.orderNumber == resource.data.orderNumber
+          && request.resource.data.createdBy == resource.data.createdBy
+          && (
+            isSuper()
+            || hasRole('sales_admin')
+            || (
+              hasRole('sales_exec')
+              && (resource.data.ownerId == request.auth.uid || resource.data.createdBy == request.auth.uid)
+              && request.resource.data.columnId == resource.data.columnId
+            )
+            || (
+              hasRole('sales_exec') && resource.data.createdBy == request.auth.uid
+              && (onlyCostDecisionMove() || onlyAcceptFlag() || onlyRejectMove())
+            )
+            || (
+              hasRole('sales_exec') && resource.data.ownerId == request.auth.uid
+              && (onlyPaidMove() || onlyAddPedido())
+            )
+            || (hasRole('production') && resource.data.treatment == 'Fabricación' && onlyMoveFields())
+            // Almacén mueve tickets de las columnas que atiende (por columna, no por tratamiento).
+            || (hasRole('warehouse') && ticketColumnName(resource.data) in ['Almacén', 'Cotización de envío', 'Cotización de envío lista'] && onlyMoveFields())
+            // Fecha y Hora promesa: según la COLUMNA donde está el ticket (no el tratamiento).
+            || (hasRole('production') && ticketColumnName(resource.data) == 'Fabricación' && onlyProductionPromise())
+            || (hasRole('warehouse') && ticketColumnName(resource.data) == 'Almacén' && onlyWarehousePromise())
+            || (hasRole('warehouse') && isQuoteShipping(resource.data) && onlyShippingCost())
+            || (hasRole('administration') && onlyConfirmPayment())
+            || (canOperateTicketData(resource.data) && onlyCounterFields())
           )
-          || (
-            hasRole('sales_exec') && resource.data.ownerId == request.auth.uid
-            && (onlyPaidMove() || onlyAddPedido())
-          )
-          || (hasRole('production') && resource.data.treatment == 'Fabricación' && onlyMoveFields())
-          || (hasRole('warehouse') && resource.data.treatment == 'Almacén' && onlyMoveFields())
-          // Fecha y Hora promesa: según la COLUMNA donde está el ticket (no el tratamiento).
-          || (hasRole('production') && ticketColumnName(resource.data) == 'Fabricación' && onlyProductionPromise())
-          || (hasRole('warehouse') && ticketColumnName(resource.data) == 'Almacén' && onlyWarehousePromise())
-          || (hasRole('warehouse') && isQuoteShipping(resource.data) && onlyShippingCost())
-          // Almacén cierra en "Listos para recolección" con evidencia adjunta.
-          || (hasRole('warehouse') && onlyCloseByWarehouse()
-              && ticketColumnName(resource.data) == 'Listos para recolección'
-              && resource.data.attachmentsCount > 0)
-          || (hasRole('administration') && onlyConfirmPayment())
-          || (canOperateTicketData(resource.data) && onlyCounterFields())
-          // Almacén adjunta evidencia en "Listos para recolección" (aunque el
-          // tratamiento sea Fabricación): puede incrementar el contador de adjuntos.
-          || (hasRole('warehouse') && ticketColumnName(resource.data) == 'Listos para recolección' && onlyCounterFields())
         );
 
       allow delete: if isSuper();

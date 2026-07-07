@@ -344,39 +344,45 @@ export async function setShippingCost(ticket, cost) {
     updates.lastMovedAt = serverTimestamp();
   }
 
+  // Guardado del costo + auto-mover: acción crítica, debe completarse.
   await updateDoc(doc(fb.db, "tickets", ticket.id), updates);
 
-  await logActivity(ticket.id, "updated",
-    `${user.displayName} asignó el Costo de envío: ${fmtMoney(amount)}.`);
-  if (willMove) {
-    await logActivity(ticket.id, "moved",
-      `${user.displayName} movió el ticket a ${target.name} (cotización lista).`,
-      { to: target.id });
+  // Log y notificaciones best-effort: no deben tumbar el guardado del costo.
+  try {
+    await logActivity(ticket.id, "updated",
+      `${user.displayName} asignó el Costo de envío: ${fmtMoney(amount)}.`);
+    if (willMove) {
+      await logActivity(ticket.id, "moved",
+        `${user.displayName} movió el ticket a ${target.name} (cotización lista).`,
+        { to: target.id });
+    }
+
+    // Avisa al Ejecutivo asignado/creador Y a todos los Administradores de Ventas,
+    // para que cualquiera de ellos acepte o retroalimente el costo.
+    const salesAdmins = store.users
+      .filter((u) => u.role === ROLES.SALES_ADMIN && u.active !== false)
+      .map((u) => u.uid || u.id);
+    const targets = [...new Set([ticket.ownerId, ticket.createdBy, ...salesAdmins].filter(Boolean))];
+    await notifyUsers(targets, {
+      ticketId: ticket.id, type: "updated",
+      title: orderRef(ticket),
+      message: `Costo de envío: ${fmtMoney(amount)}. Acepta o retroalimenta el costo en "Cotización de envío lista".`,
+    });
+
+    // Aviso por Google Chat (webhook a un espacio; best-effort). Menciona al
+    // vendedor asignado/creador y a los Administradores de Ventas.
+    const people = [...new Set([ticket.ownerId, ticket.createdBy].filter(Boolean))].map((uid) => {
+      const u = store.users.find((x) => (x.uid || x.id) === uid);
+      return u?.chatUserId ? `<users/${u.chatUserId}>` : `@${u?.displayName || userName(uid)}`;
+    });
+    const mentions = [...new Set([...people, ...roleMentions(ROLES.SALES_ADMIN).split(" ").filter(Boolean)])].join(" ");
+    await sendGoogleChat(
+      `📦 *${orderRef(ticket)}* — cotización de envío lista. Costo: *${fmtMoney(amount)}*.\n` +
+      `Acepta o retroalimenta el costo: ${mentions}`
+    );
+  } catch (err) {
+    console.warn("[costo de envío] Guardado, pero falló un paso secundario:", err);
   }
-
-  // Avisa al Ejecutivo asignado/creador Y a todos los Administradores de Ventas,
-  // para que cualquiera de ellos acepte o retroalimente el costo.
-  const salesAdmins = store.users
-    .filter((u) => u.role === ROLES.SALES_ADMIN && u.active !== false)
-    .map((u) => u.uid || u.id);
-  const targets = [...new Set([ticket.ownerId, ticket.createdBy, ...salesAdmins].filter(Boolean))];
-  await notifyUsers(targets, {
-    ticketId: ticket.id, type: "updated",
-    title: orderRef(ticket),
-    message: `Costo de envío: ${fmtMoney(amount)}. Acepta o retroalimenta el costo en "Cotización de envío lista".`,
-  });
-
-  // Aviso por Google Chat (webhook a un espacio; best-effort). Menciona al
-  // vendedor asignado/creador y a los Administradores de Ventas.
-  const people = [...new Set([ticket.ownerId, ticket.createdBy].filter(Boolean))].map((uid) => {
-    const u = store.users.find((x) => (x.uid || x.id) === uid);
-    return u?.chatUserId ? `<users/${u.chatUserId}>` : `@${u?.displayName || userName(uid)}`;
-  });
-  const mentions = [...new Set([...people, ...roleMentions(ROLES.SALES_ADMIN).split(" ").filter(Boolean)])].join(" ");
-  await sendGoogleChat(
-    `📦 *${orderRef(ticket)}* — cotización de envío lista. Costo: *${fmtMoney(amount)}*.\n` +
-    `Acepta o retroalimenta el costo: ${mentions}`
-  );
 }
 
 // Construye las menciones de Google Chat de todos los usuarios activos de un rol.

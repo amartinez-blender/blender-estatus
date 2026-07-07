@@ -50,17 +50,23 @@ export function uploadAttachment(ticket, file, onProgress = () => {}) {
             uploadedBy: user.uid,
             createdAt: serverTimestamp(),
           });
-          await updateDoc(doc(fb.db, "tickets", ticket.id), {
-            attachmentsCount: increment(1),
-            updatedAt: serverTimestamp(),
-          });
-          await logActivity(ticket.id, "attachment_added",
-            `${user.displayName} adjuntó "${file.name}".`);
-          await notifyUsers([ticket.ownerId], {
-            ticketId: ticket.id, type: "attachment",
-            title: `Pedido ${ticket.orderNumber}`,
-            message: `${user.displayName} adjuntó "${file.name}".`,
-          });
+          // El contador, el log y la notificación son best-effort: lo crítico es que
+          // el adjunto (evidencia) quede creado. Nada de esto debe tumbar la subida.
+          try {
+            await updateDoc(doc(fb.db, "tickets", ticket.id), {
+              attachmentsCount: increment(1),
+              updatedAt: serverTimestamp(),
+            });
+            await logActivity(ticket.id, "attachment_added",
+              `${user.displayName} adjuntó "${file.name}".`);
+            await notifyUsers([ticket.ownerId], {
+              ticketId: ticket.id, type: "attachment",
+              title: `Pedido ${ticket.orderNumber}`,
+              message: `${user.displayName} adjuntó "${file.name}".`,
+            });
+          } catch (err) {
+            console.warn("[adjunto] Evidencia subida, pero falló un paso secundario (contador/log/notificación):", err);
+          }
           resolve();
         } catch (err) {
           reject(err);

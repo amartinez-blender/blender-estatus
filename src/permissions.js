@@ -58,9 +58,9 @@ export function can(user, action, resource = null) {
       // Producción mueve solo desde la columna Fabricación (req. 6).
       if (r === ROLES.PRODUCTION)
         return treatmentMatches(user, resource) && colMatches(resource, "Fabricación");
-      // Almacén mueve solo desde Cotización de envío o Almacén (req. 5).
+      // Almacén mueve por COLUMNA (las etapas que atiende), sin importar el tratamiento.
       if (r === ROLES.WAREHOUSE)
-        return treatmentMatches(user, resource) && colMatches(resource, "Almacén", "Cotización de envío");
+        return colMatches(resource, "Almacén", "Cotización de envío", "Cotización de envío lista");
       return false;
 
     case "ticket:assignOwner": // cambiar vendedor responsable
