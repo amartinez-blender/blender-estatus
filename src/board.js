@@ -2,7 +2,7 @@
 // modal de creación y panel de detalle del ticket.
 
 import { store, $, $$, on, escapeHtml, relativeTime, fmtDateTime, fmtFileSize, fmtCountdown, fmtMoney, normalize,
-  mainOrderNumber, orderRef,
+  toDate, mainOrderNumber, orderRef,
   TREATMENTS, SHIPPING_TYPES, DELIVERY_MODES, DELIVERY_MODES_SHIPPING, PRIORITIES,
   PAYMENT_TYPES, PAYMENT_METHODS, MAX_ADDRESS_LENGTH } from "./utils.js";
 import { can, visibleTickets } from "./permissions.js";
@@ -50,6 +50,7 @@ function renderBoardColumns() {
 
   const filter = $("#board-status-filter").value || "Activo";
   const slaFilter = $("#board-sla-filter")?.value || ""; // "", "ontime", "late"
+  const sort = $("#board-sort")?.value || ""; // "", "oldest", "recent"
   const search = ($("#board-search")?.value || "").trim().toLowerCase();
   const tickets = visibleTickets(user, store.tickets)
     .filter((t) => (filter === "Todos" ? true : t.status === filter))
@@ -68,8 +69,19 @@ function renderBoardColumns() {
         String(t.client || "").toLowerCase().includes(search);
     });
 
+  // Tiempo en la columna = desde que entró (lastMovedAt; si no, createdAt).
+  const enteredMs = (t) =>
+    (toDate(t.lastMovedAt) || toDate(t.createdAt) || new Date(0)).getTime();
+
   container.innerHTML = cols.map((col) => {
     const colTickets = tickets.filter((t) => t.columnId === col.id);
+    if (sort === "oldest") {
+      // Más antiguos primero (los que llevan más tiempo en la columna).
+      colTickets.sort((a, b) => enteredMs(a) - enteredMs(b));
+    } else if (sort === "recent") {
+      // Más recientes primero (los que entraron hace menos).
+      colTickets.sort((a, b) => enteredMs(b) - enteredMs(a));
+    }
     return `
       <section class="board-column" data-col="${col.id}">
         <header class="column-header">

@@ -493,6 +493,7 @@ function bindStaticEvents() {
   // Filtros del tablero (estado, estatus de tarea SLA y búsqueda por número)
   $("#board-status-filter").addEventListener("change", renderBoard);
   $("#board-sla-filter").addEventListener("change", renderBoard);
+  $("#board-sort")?.addEventListener("change", renderBoard);
   $("#board-search")?.addEventListener("input", debounce(renderBoard, 200));
 
   // Notificaciones
