@@ -197,19 +197,22 @@ service cloud.firestore {
         && isValidTicket(request.resource.data)
         && request.resource.data.createdBy == request.auth.uid;
 
-      // ── Ruta dedicada de Almacén en "Listos para recolección" ──
-      // Cierre + incremento del contador de adjuntos. Es AUTÓNOMA: no re-valida todo
-      // el ticket (isValidTicket) ni depende de campos heredados, así funciona en
-      // CUALQUIER ticket —viejo o nuevo, de cualquier tratamiento—.
-      // `onlyCloseByWarehouse`/`onlyCounterFields` ya restringen qué campos cambian.
-      // La evidencia se exige y se sube en el cliente; NO se gatea el cierre con el
-      // contador (evita fallos si el incremento del contador no alcanzó a persistir).
+      // ── Ruta dedicada de Almacén (AUTÓNOMA, por COLUMNA, sin isValidTicket) ──
+      // Almacén solo puede tocar campos muy acotados: costo de envío, fecha promesa,
+      // mover, contadores y cierre. Como cada onlyXxx() ya restringe EXACTAMENTE qué
+      // campos cambian (y ninguno toca orderNumber/createdBy), es seguro NO revalidar
+      // todo el ticket. Así funciona en CUALQUIER ticket —viejo o nuevo, de cualquier
+      // tratamiento— sin que un campo heredado bloquee la operación.
       allow update: if (
-          hasRole('warehouse')
-          && ticketColumnName(resource.data) == 'Listos para recolección'
-          && (
-            onlyCounterFields()
-            || onlyCloseByWarehouse()
+          hasRole('warehouse') && (
+            // Cotizar envío: guarda costo y auto-mueve a "Cotización de envío lista".
+            (isQuoteShipping(resource.data) && onlyShippingCost())
+            // Cierre con evidencia + contador en "Listos para recolección".
+            || (ticketColumnName(resource.data) == 'Listos para recolección' && (onlyCloseByWarehouse() || onlyCounterFields()))
+            // Fecha y Hora para Listo cuando el ticket está en la columna "Almacén".
+            || (ticketColumnName(resource.data) == 'Almacén' && onlyWarehousePromise())
+            // Mover / contador de adjuntos en las columnas que atiende Almacén.
+            || (ticketColumnName(resource.data) in ['Almacén', 'Cotización de envío', 'Cotización de envío lista'] && (onlyMoveFields() || onlyCounterFields()))
           )
         )
         || (
@@ -233,12 +236,8 @@ service cloud.firestore {
               && (onlyPaidMove() || onlyAddPedido())
             )
             || (hasRole('production') && resource.data.treatment == 'Fabricación' && onlyMoveFields())
-            // Almacén mueve tickets de las columnas que atiende (por columna, no por tratamiento).
-            || (hasRole('warehouse') && ticketColumnName(resource.data) in ['Almacén', 'Cotización de envío', 'Cotización de envío lista'] && onlyMoveFields())
             // Fecha y Hora promesa: según la COLUMNA donde está el ticket (no el tratamiento).
             || (hasRole('production') && ticketColumnName(resource.data) == 'Fabricación' && onlyProductionPromise())
-            || (hasRole('warehouse') && ticketColumnName(resource.data) == 'Almacén' && onlyWarehousePromise())
-            || (hasRole('warehouse') && isQuoteShipping(resource.data) && onlyShippingCost())
             || (hasRole('administration') && onlyConfirmPayment())
             || (canOperateTicketData(resource.data) && onlyCounterFields())
           )
