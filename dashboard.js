@@ -128,13 +128,18 @@ export function renderDashboard() {
     if (!ok) return;
     e.target.disabled = true;
     try {
-      const n = await resetBreaches();
-      // Limpia ambos cachés y refresca las dos secciones (atrasos y tiempos).
+      const r = await resetBreaches();
+      // Limpia ambos cachés y refresca las dos secciones (atrasos y tiempos),
+      // aunque una de las dos deleciones haya fallado.
       breachCache = null;
       stepCache = null;
-      toast(`Gráficas reiniciadas (${n} registros borrados).`, "success");
       renderBreaches();
       renderStepTimes();
+      if (r.errors && r.errors.length) {
+        toast(`Reinicio parcial. Atrasos: ${r.breaches}, Tiempos: ${r.steps}. Errores → ${r.errors.join("; ")}`, "error", 7000);
+      } else {
+        toast(`Gráficas reiniciadas. Atrasos: ${r.breaches}, Tiempos promedio: ${r.steps}.`, "success");
+      }
     } catch (err) {
       toast("No se pudo reiniciar: " + err.message, "error");
     } finally {

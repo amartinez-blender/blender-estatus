@@ -142,13 +142,26 @@ async function deleteAllInCollection(name, perDoc = null) {
 }
 
 // Reinicia las gráficas y estadísticas del Dashboard: borra el histórico de
-// atrasos (slaBreaches) Y los tiempos por etapa (stepTimes). Devuelve el total.
+// atrasos (slaBreaches) Y los tiempos por etapa (stepTimes). Cada colección se
+// borra de forma independiente para que un fallo en una no impida la otra.
+// Devuelve { breaches, steps } y, si algo falla, { error }.
 export async function resetBreaches() {
   const user = store.currentUser;
   if (!user || user.role !== ROLES.SUPERADMIN) throw new Error("Solo SuperAdmin.");
-  const breaches = await deleteAllInCollection("slaBreaches");
-  const steps = await deleteAllInCollection("stepTimes");
-  return breaches + steps;
+  const result = { breaches: 0, steps: 0, errors: [] };
+  try {
+    result.breaches = await deleteAllInCollection("slaBreaches");
+  } catch (err) {
+    console.error("[reset] Falló borrar slaBreaches:", err);
+    result.errors.push("atrasos: " + err.message);
+  }
+  try {
+    result.steps = await deleteAllInCollection("stepTimes");
+  } catch (err) {
+    console.error("[reset] Falló borrar stepTimes:", err);
+    result.errors.push("tiempos: " + err.message);
+  }
+  return result;
 }
 
 // Reinicia TODOS los datos operativos: tickets (+ números de pedido),
