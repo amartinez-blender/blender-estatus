@@ -89,6 +89,10 @@ export async function createTicket(data) {
   batch.set(ticketRef, {
     orderNumber: String(data.orderNumber),
     client: String(data.client || "").trim(), // Nombre del cliente (obligatorio, lo fija Ventas)
+    // Pedido automático: si la cotización es < 70000, al confirmar pago el sistema
+    // usa la cotización como # de pedido y omite "Agregar Pedido". Solo tickets NUEVOS
+    // llevan esta bandera (los existentes no la tienen → flujo manual).
+    autoPedido: Number(data.orderNumber) < 70000,
     title: data.title || `Pedido ${data.orderNumber}`,
     treatment: data.treatment,
     shippingType: data.shippingType,
@@ -586,6 +590,33 @@ export async function confirmPayment(ticket, paymentMethod) {
   recordBreach(ticket, "Confirmar Pago", businessMsBetween(deadline, Date.now()));
   recordStepTime(ticket, "Confirmar pago");
 
+  // Caso AUTOMÁTICO (solo tickets creados con la bandera autoPedido = cotización < 70000):
+  // no se pide "Agregar Pedido"; el # de pedido = # de cotización y el ticket avanza
+  // directo a Fabricación o Almacén según el tratamiento.
+  if (ticket.autoPedido === true && !ticket.pedidoNumber) {
+    const target = findColumnByName(ticket.treatment); // "Fabricación" | "Almacén"
+    const updates = {
+      paymentConfirmed: true,
+      paymentMethod: method,
+      pedidoNumber: String(ticket.orderNumber), // pedido = cotización
+      updatedAt: serverTimestamp(),
+    };
+    if (target) { updates.columnId = target.id; updates.lastMovedAt = serverTimestamp(); }
+    await updateDoc(doc(fb.db, "tickets", ticket.id), updates);
+
+    const moved = { ...ticket, pedidoNumber: String(ticket.orderNumber) };
+    await logActivity(ticket.id, "updated",
+      `${user.displayName} confirmó el pago (${method}). # de pedido asignado automáticamente (${ticket.orderNumber}).${target ? ` Pasó a ${target.name}.` : ""}`);
+    await notifyUsers([ticket.ownerId], {
+      ticketId: ticket.id, type: "updated",
+      title: orderRef(moved),
+      message: `Pago Confirmado (${method}). # de pedido = ${ticket.orderNumber}.${target ? ` Pasó a ${target.name}.` : ""}`,
+    });
+    if (target) await notifyColumnEntry(moved, target.name);
+    return;
+  }
+
+  // Caso MANUAL (cotización ≥ 70000 o tickets sin la bandera): pasa por "Agregar Pedido".
   const target = findColumnByName(ROUTING_COLUMN_NAMES.AGREGAR_PEDIDO);
   const updates = { paymentConfirmed: true, paymentMethod: method, updatedAt: serverTimestamp() };
   if (target) { updates.columnId = target.id; updates.lastMovedAt = serverTimestamp(); }

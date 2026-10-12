@@ -133,6 +133,7 @@ service cloud.firestore {
         && (!('paymentConfirmed' in d) || d.paymentConfirmed is bool)
         && (!('paymentMethod' in d) || d.paymentMethod == null || d.paymentMethod in ['Transferencia', 'Crédito', 'TDC', 'TDD', 'Nota de Crédito', 'Efectivo'])
         && (!('pedidoNumber' in d) || d.pedidoNumber == null || d.pedidoNumber is string)
+        && (!('autoPedido' in d) || d.autoPedido is bool)
         && (!('shippedAt' in d) || d.shippedAt == null || d.shippedAt is string)
         && d.addressNA is bool
         && d.shippingAddress is string && d.shippingAddress.size() <= 500
@@ -181,6 +182,12 @@ service cloud.firestore {
       function onlyConfirmPayment() {
         return changedKeys().hasOnly(['paymentConfirmed', 'paymentMethod', 'columnId', 'lastMovedAt', 'updatedAt']);
       }
+      // Confirmar pago con # de pedido automático (cotización < 70000): además del
+      // pago, fija pedidoNumber = orderNumber y mueve a Fabricación/Almacén.
+      function onlyConfirmPaymentAuto() {
+        return changedKeys().hasOnly(['paymentConfirmed', 'paymentMethod', 'pedidoNumber', 'columnId', 'lastMovedAt', 'updatedAt'])
+          && request.resource.data.pedidoNumber == resource.data.orderNumber;
+      }
       function onlyAddPedido() {
         return changedKeys().hasOnly(['pedidoNumber', 'columnId', 'lastMovedAt', 'updatedAt']);
       }
@@ -228,7 +235,9 @@ service cloud.firestore {
               && request.resource.data.columnId == resource.data.columnId
             )
             || (
-              hasRole('sales_exec') && resource.data.createdBy == request.auth.uid
+              // Aceptar/Rechazar costo: el creador O el vendedor responsable.
+              hasRole('sales_exec')
+              && (resource.data.createdBy == request.auth.uid || resource.data.ownerId == request.auth.uid)
               && (onlyCostDecisionMove() || onlyAcceptFlag() || onlyRejectMove())
             )
             || (
@@ -238,7 +247,7 @@ service cloud.firestore {
             || (hasRole('production') && resource.data.treatment == 'Fabricación' && onlyMoveFields())
             // Fecha y Hora promesa: según la COLUMNA donde está el ticket (no el tratamiento).
             || (hasRole('production') && ticketColumnName(resource.data) == 'Fabricación' && onlyProductionPromise())
-            || (hasRole('administration') && onlyConfirmPayment())
+            || (hasRole('administration') && (onlyConfirmPayment() || onlyConfirmPaymentAuto()))
             || (canOperateTicketData(resource.data) && onlyCounterFields())
           )
         );

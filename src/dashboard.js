@@ -122,16 +122,24 @@ export function renderDashboard() {
   $("#btn-reset-graphs")?.addEventListener("click", async (e) => {
     const ok = await confirmDialog({
       title: "Reestablecer gráficas",
-      message: "Se borrará todo el histórico de atrasos del Dashboard. Esta acción no se puede deshacer.",
+      message: "Se borrarán el histórico de atrasos y los tiempos promedio por etapa del Dashboard. Esta acción no se puede deshacer.",
       confirmText: "Reestablecer", danger: true,
     });
     if (!ok) return;
     e.target.disabled = true;
     try {
-      const n = await resetBreaches();
+      const r = await resetBreaches();
+      // Limpia ambos cachés y refresca las dos secciones (atrasos y tiempos),
+      // aunque una de las dos deleciones haya fallado.
       breachCache = null;
-      toast(`Histórico de atrasos reiniciado (${n} registros).`, "success");
+      stepCache = null;
       renderBreaches();
+      renderStepTimes();
+      if (r.errors && r.errors.length) {
+        toast(`Reinicio parcial. Atrasos: ${r.breaches}, Tiempos: ${r.steps}. Errores → ${r.errors.join("; ")}`, "error", 7000);
+      } else {
+        toast(`Gráficas reiniciadas. Atrasos: ${r.breaches}, Tiempos promedio: ${r.steps}.`, "success");
+      }
     } catch (err) {
       toast("No se pudo reiniciar: " + err.message, "error");
     } finally {

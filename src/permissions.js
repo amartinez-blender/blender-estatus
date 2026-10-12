@@ -111,10 +111,12 @@ export function can(user, action, resource = null) {
       if (r === ROLES.SALES_EXEC) return ownsTicket(user, resource) && colMatches(resource, "Agregar Pedido");
       return false;
 
-    // Aceptar/Rechazar el costo → solo el vendedor que CREÓ el ticket.
+    // Aceptar/Rechazar el costo → el creador del ticket O el vendedor responsable
+    // (y siempre el Administrador de Ventas).
     case "ticket:decideCost":
-      return (r === ROLES.SALES_EXEC || r === ROLES.SALES_ADMIN) &&
-        resource?.createdBy === user.uid;
+      if (r === ROLES.SALES_ADMIN) return true;
+      if (r === ROLES.SALES_EXEC) return ownsTicket(user, resource); // creador o responsable
+      return false;
 
     // Confirmar "Envío Pagado por el cliente" → el vendedor asignado o el Admin de Ventas.
     case "ticket:markPaid":
