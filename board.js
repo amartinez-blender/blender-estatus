@@ -2,7 +2,7 @@
 // modal de creación y panel de detalle del ticket.
 
 import { store, $, $$, on, escapeHtml, relativeTime, fmtDateTime, fmtFileSize, fmtCountdown, fmtMoney, normalize,
-  mainOrderNumber, orderRef,
+  toDate, mainOrderNumber, orderRef,
   TREATMENTS, SHIPPING_TYPES, DELIVERY_MODES, DELIVERY_MODES_SHIPPING, PRIORITIES,
   PAYMENT_TYPES, PAYMENT_METHODS, MAX_ADDRESS_LENGTH } from "./utils.js";
 import { can, visibleTickets } from "./permissions.js";
@@ -11,7 +11,8 @@ import { renderVendorFilter, vendorFilterMatch } from "./filters.js";
 import { computeSla, isFabricacionColumn, isAlmacenColumn, isCotizacionColumn, isCotizacionListaColumn, isAdministracionColumn, isAgregarPedidoColumn } from "./sla.js";
 import { getTicket, createTicket, updateTicket, moveTicket, setTicketStatus, deleteTicket,
   setProductionPromise, setWarehousePromise, setShippingCost,
-  acceptShippingCost, markShippingPaid, rejectShippingCost, confirmPayment, addPedido } from "./tickets.js";
+  acceptShippingCost, markShippingPaid, rejectShippingCost, confirmPayment, addPedido,
+  closeByWarehouseWithShipping } from "./tickets.js";
 import { getUser, userName, sellableUsers } from "./users.js";
 import { listenComments, addComment, editComment, softDeleteComment, mentionSuggestions, highlightMentions } from "./comments.js";
 import { listenAttachments, uploadAttachment, deleteAttachment, isImage } from "./attachments.js";
@@ -49,6 +50,7 @@ function renderBoardColumns() {
 
   const filter = $("#board-status-filter").value || "Activo";
   const slaFilter = $("#board-sla-filter")?.value || ""; // "", "ontime", "late"
+  const sort = $("#board-sort")?.value || ""; // "", "oldest", "recent"
   const search = ($("#board-search")?.value || "").trim().toLowerCase();
   const tickets = visibleTickets(user, store.tickets)
     .filter((t) => (filter === "Todos" ? true : t.status === filter))
@@ -61,13 +63,25 @@ function renderBoardColumns() {
     })
     .filter((t) => {
       if (!search) return true;
-      // Busca por # de cotización (orderNumber) o # de pedido (pedidoNumber).
+      // Busca por # de cotización, # de pedido o nombre del cliente.
       return String(t.orderNumber || "").toLowerCase().includes(search) ||
-        String(t.pedidoNumber || "").toLowerCase().includes(search);
+        String(t.pedidoNumber || "").toLowerCase().includes(search) ||
+        String(t.client || "").toLowerCase().includes(search);
     });
+
+  // Tiempo en la columna = desde que entró (lastMovedAt; si no, createdAt).
+  const enteredMs = (t) =>
+    (toDate(t.lastMovedAt) || toDate(t.createdAt) || new Date(0)).getTime();
 
   container.innerHTML = cols.map((col) => {
     const colTickets = tickets.filter((t) => t.columnId === col.id);
+    if (sort === "oldest") {
+      // Más antiguos primero (los que llevan más tiempo en la columna).
+      colTickets.sort((a, b) => enteredMs(a) - enteredMs(b));
+    } else if (sort === "recent") {
+      // Más recientes primero (los que entraron hace menos).
+      colTickets.sort((a, b) => enteredMs(b) - enteredMs(a));
+    }
     return `
       <section class="board-column" data-col="${col.id}">
         <header class="column-header">
@@ -192,6 +206,11 @@ export function openTicketForm(defaultColumnId = null) {
             maxlength="5" placeholder="12345" required>
         </label>
         <label class="field">
+          <span>Cliente *</span>
+          <input class="input" id="tf-client" type="text" maxlength="200"
+            placeholder="Nombre del cliente" required>
+        </label>
+        <label class="field">
           <span>Tratamiento *</span>
           <select class="input" id="tf-treatment" required>
             <option value="">Selecciona…</option>
@@ -304,6 +323,7 @@ export function openTicketForm(defaultColumnId = null) {
       const columnId = routeColumnId(treatment, shippingType, defaultColumnId);
       await createTicket({
         orderNumber: $("#tf-order").value.trim(),
+        client: $("#tf-client").value.trim(),
         treatment,
         shippingType,
         deliveryMode: deliverySel.value,
@@ -572,6 +592,11 @@ function renderTicketDetail(t) {
 
       <div class="form-grid">
         <label class="field">
+          <span>Cliente${canEdit ? " *" : ""}</span>
+          <input class="input" id="tm-client" type="text" maxlength="200"
+            value="${escapeHtml(t.client || "")}" ${canEdit ? "" : "disabled"}>
+        </label>
+        <label class="field">
           <span>Tipo de pago${canPayType ? " *" : ""}</span>
           <select class="input" id="tm-payment" ${canPayType ? "" : "disabled"}>
             ${PAYMENT_TYPES.map((x) => `<option ${t.tipoPago === x ? "selected" : ""}>${x}</option>`).join("")}
@@ -625,6 +650,7 @@ function renderTicketDetail(t) {
       <div class="detail-meta text-muted">
         <span>Creado por <strong>${escapeHtml(userName(t.createdBy))}</strong> · ${fmtDateTime(t.createdAt)}</span>
         <span>Responsable: <strong>${escapeHtml(userName(t.ownerId))}</strong></span>
+        ${t.shippedAt ? `<span>Fecha y hora de envío: <strong>${fmtDateTime(t.shippedAt)}</strong></span>` : ""}
         <span>Última actualización: ${fmtDateTime(t.updatedAt)}</span>
       </div>
 
@@ -636,7 +662,7 @@ function renderTicketDetail(t) {
           ${t.status !== "Activo" && can(user, "ticket:edit", t) ? `<button class="btn btn-ghost" id="tm-reopen">Reabrir</button>` : ""}
           ${isSuper ? `<button class="btn btn-danger" id="tm-delete">Eliminar</button>` : ""}
         </div>
-        ${closeNeedsEvidence ? `<p class="text-muted" id="tm-close-note">Al cerrar se te pedirá adjuntar evidencia del envío (foto o PDF).</p>` : ""}` : ""}
+        ${closeNeedsEvidence ? `<p class="text-muted" id="tm-close-note">Al cerrar se te pedirá la Fecha y Hora de Envío y la foto de evidencia.</p>` : ""}` : ""}
 
       <section class="detail-section">
         <h3>Comentarios</h3>
@@ -842,6 +868,7 @@ function bindDetailEvents(t, perms) {
     setSaving($("#tm-save"), true);
     try {
       const changes = {
+        client: $("#tm-client").value.trim(),
         treatment: $("#tm-treatment").value,
         shippingType: $("#tm-shipping").value,
         deliveryMode: $("#tm-delivery").value,
@@ -884,36 +911,37 @@ function bindDetailEvents(t, perms) {
     });
   };
   if (perms.closeNeedsEvidence) {
-    // Almacén en "Listos para recolección": al cerrar se pide adjuntar evidencia
-    // (foto o PDF). Se sube el archivo y, ya con evidencia, se cierra el ticket.
+    // Almacén en "Listos para recolección": al cerrar se pide la Fecha y Hora de
+    // Envío + la foto de evidencia. Se sube el archivo y luego se cierra el ticket
+    // (esto notifica al Responsable y a los Administradores de Ventas).
     $("#tm-close-ticket")?.addEventListener("click", async () => {
-      const ok = await confirmDialog({
-        title: "Cerrar ticket",
-        message: `Para cerrar el ticket #${mainOrderNumber(t)} debes adjuntar evidencia del envío (foto o PDF). ¿Continuar?`,
-        confirmText: "Adjuntar y cerrar",
-      });
-      if (!ok) return;
-      const input = document.createElement("input");
-      input.type = "file";
-      input.accept = "image/jpeg,image/png,image/webp,application/pdf";
-      input.onchange = async () => {
-        const file = input.files && input.files[0];
-        if (!file) return;
-        const btn = $("#tm-close-ticket");
-        const prev = btn ? btn.textContent : "";
-        if (btn) { btn.disabled = true; btn.textContent = "Subiendo evidencia…"; }
+      const res = await shippingCloseDialog(t);
+      if (!res) return;
+      const btn = $("#tm-close-ticket");
+      const prev = btn ? btn.textContent : "";
+      if (btn) { btn.disabled = true; btn.textContent = "Cerrando…"; }
+      // Paso 1: subir la evidencia. Paso 2: cerrar. Mensajes separados para saber
+      // exactamente qué paso falla si hubiera un problema de permisos.
+      try {
         try {
-          await uploadAttachment(t, file, () => {});
-          await setTicketStatus(t, "Cerrado");
-          toast("Ticket cerrado con evidencia.", "success");
-          closeModal("ticket-modal");
-          closeDetailListeners();
+          await uploadAttachment(t, res.file, () => {});
         } catch (err) {
-          toast("No se pudo cerrar: " + err.message, "error");
-          if (btn) { btn.disabled = false; btn.textContent = prev; }
+          console.error("[cierre Almacén] Falló SUBIR EVIDENCIA:", err);
+          throw new Error("no se pudo subir la evidencia (" + err.message + ")");
         }
-      };
-      input.click();
+        try {
+          await closeByWarehouseWithShipping(t, res.shippedAt);
+        } catch (err) {
+          console.error("[cierre Almacén] Falló CAMBIAR ESTATUS:", err);
+          throw new Error("no se pudo cambiar el estatus (" + err.message + ")");
+        }
+        toast("Ticket cerrado con evidencia de envío.", "success");
+        closeModal("ticket-modal");
+        closeDetailListeners();
+      } catch (err) {
+        toast("No se pudo cerrar: " + err.message, "error");
+        if (btn) { btn.disabled = false; btn.textContent = prev; }
+      }
     });
   } else {
     statusAction("#tm-close-ticket", "Cerrado", "Cerrar", false);
@@ -977,6 +1005,73 @@ function bindDetailEvents(t, perms) {
     $("#tm-file").addEventListener("change", (e) => handleFile(e.target.files[0]));
     $("#tm-camera")?.addEventListener("change", (e) => handleFile(e.target.files[0]));
   }
+}
+
+// Diálogo de cierre por Almacén: pide Fecha y Hora de Envío + foto de evidencia.
+// Resuelve con { shippedAt, file } o null si se cancela.
+function shippingCloseDialog(t) {
+  return new Promise((resolve) => {
+    const now = new Date();
+    const pad = (n) => String(n).padStart(2, "0");
+    const localNow = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
+
+    const modal = document.createElement("div");
+    modal.className = "modal modal-top open";
+    modal.innerHTML = `
+      <div class="modal-card modal-card-sm">
+        <header class="modal-header">
+          <h2>Cerrar ticket · Envío</h2>
+          <button class="btn btn-icon" data-x aria-label="Cerrar">✕</button>
+        </header>
+        <div class="modal-body">
+          <p class="text-muted">Ticket ${escapeHtml(orderRef(t))}. Registra el envío para cerrar.</p>
+          <div class="form-errors hidden" id="sc-errors"></div>
+          <label class="field">
+            <span>Fecha y hora de envío *</span>
+            <input class="input" id="sc-datetime" type="datetime-local" value="${localNow}" required>
+          </label>
+          <label class="field">
+            <span>Foto de evidencia *</span>
+            <div class="attach-controls">
+              <label class="btn btn-ghost">📎 Subir archivo
+                <input type="file" id="sc-file" accept="image/jpeg,image/png,image/webp,application/pdf" hidden></label>
+              <label class="btn btn-ghost">📷 Tomar foto
+                <input type="file" id="sc-camera" accept="image/*" capture="environment" hidden></label>
+            </div>
+            <p class="text-muted" id="sc-filename">Ningún archivo seleccionado.</p>
+          </label>
+        </div>
+        <footer class="modal-footer">
+          <button type="button" class="btn btn-ghost" data-x>Cancelar</button>
+          <button type="button" class="btn btn-primary" id="sc-confirm">Cerrar ticket</button>
+        </footer>
+      </div>`;
+    document.body.appendChild(modal);
+    document.body.classList.add("modal-open");
+
+    const q = (sel) => modal.querySelector(sel);
+    let file = null;
+    const nameEl = q("#sc-filename");
+    const setFile = (f) => { file = f || null; nameEl.textContent = file ? file.name : "Ningún archivo seleccionado."; };
+    q("#sc-file").addEventListener("change", (e) => setFile(e.target.files[0]));
+    q("#sc-camera").addEventListener("change", (e) => setFile(e.target.files[0]));
+
+    const cleanup = (result) => {
+      modal.remove();
+      if (!document.querySelector(".modal.open")) document.body.classList.remove("modal-open");
+      resolve(result);
+    };
+    modal.querySelectorAll("[data-x]").forEach((b) => b.addEventListener("click", () => cleanup(null)));
+    modal.addEventListener("click", (e) => { if (e.target === modal) cleanup(null); });
+
+    q("#sc-confirm").addEventListener("click", () => {
+      const dt = q("#sc-datetime").value;
+      const err = q("#sc-errors");
+      if (!dt) { err.textContent = "Indica la fecha y hora de envío."; err.classList.remove("hidden"); return; }
+      if (!file) { err.textContent = "Adjunta la foto de evidencia del envío."; err.classList.remove("hidden"); return; }
+      cleanup({ shippedAt: dt, file });
+    });
+  });
 }
 
 // ---------- Autocompletado de menciones ----------
@@ -1131,7 +1226,7 @@ function renderActivity(items) {
   box.innerHTML = `<ul class="activity-list">${items.map((a) => `
     <li>
       <span>${escapeHtml(a.message)}</span>
-      <time>${relativeTime(a.createdAt)}</time>
+      <time class="activity-time" title="${escapeHtml(relativeTime(a.createdAt))}">${fmtDateTime(a.createdAt)}</time>
     </li>`).join("")}</ul>`;
 }
 
