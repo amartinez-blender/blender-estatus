@@ -1226,7 +1226,7 @@ function renderActivity(items) {
   box.innerHTML = `<ul class="activity-list">${items.map((a) => `
     <li>
       <span>${escapeHtml(a.message)}</span>
-      <time>${relativeTime(a.createdAt)}</time>
+      <time class="activity-time" title="${escapeHtml(relativeTime(a.createdAt))}">${fmtDateTime(a.createdAt)}</time>
     </li>`).join("")}</ul>`;
 }
 
