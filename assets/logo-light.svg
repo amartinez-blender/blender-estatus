@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="1000" viewBox="0 0 1000 1000" role="img" aria-label="Blender Group">
+  <g fill-rule="evenodd">
+    <!-- Mitad izquierda (negro) -->
+    <path fill="#1E1E1E" d="M12 205 L203 14 L489 300 L489 491 L299 491 Z M107 205 L326 424 L423 424 L423 328 L203 109 Z"/>
+    <path fill="#1E1E1E" d="M12 795 L203 986 L489 700 L489 509 L299 509 Z M107 795 L326 576 L423 576 L423 672 L203 891 Z"/>
+    <!-- Mitad derecha (amarillo) -->
+    <path fill="#FFDD00" d="M988 205 L797 14 L511 300 L511 491 L701 491 Z M893 205 L674 424 L577 424 L577 328 L797 109 Z"/>
+    <path fill="#FFDD00" d="M988 795 L797 986 L511 700 L511 509 L701 509 Z M893 795 L674 576 L577 576 L577 672 L797 891 Z"/>
+  </g>
+</svg>
