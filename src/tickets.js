@@ -23,6 +23,16 @@ import { sendGoogleChat } from "./chat.js";
 import { getSla } from "./settings.js";
 import { addBusinessMs, businessMsBetween } from "./businesstime.js";
 
+// ===================== Pedido automático =====================
+// Cotizaciones MAYORES a este número usan la cotización como # de pedido al
+// confirmar pago (se omite "Agregar Pedido"). Solo aplica a tickets nuevos.
+export const AUTO_PEDIDO_MIN = 70000;
+
+// Ticket nuevo (tiene el campo autoPedido) con cotización > 70000.
+export function isAutoPedidoTicket(ticket) {
+  return !!ticket && ("autoPedido" in ticket) && Number(ticket.orderNumber) > AUTO_PEDIDO_MIN;
+}
+
 // ===================== Listeners por rol =====================
 
 export function listenTickets() {
@@ -89,10 +99,10 @@ export async function createTicket(data) {
   batch.set(ticketRef, {
     orderNumber: String(data.orderNumber),
     client: String(data.client || "").trim(), // Nombre del cliente (obligatorio, lo fija Ventas)
-    // Pedido automático: si la cotización es < 70000, al confirmar pago el sistema
+    // Pedido automático: si la cotización es > 70000, al confirmar pago el sistema
     // usa la cotización como # de pedido y omite "Agregar Pedido". Solo tickets NUEVOS
     // llevan esta bandera (los existentes no la tienen → flujo manual).
-    autoPedido: Number(data.orderNumber) < 70000,
+    autoPedido: Number(data.orderNumber) > AUTO_PEDIDO_MIN,
     title: data.title || `Pedido ${data.orderNumber}`,
     treatment: data.treatment,
     shippingType: data.shippingType,
@@ -590,10 +600,12 @@ export async function confirmPayment(ticket, paymentMethod) {
   recordBreach(ticket, "Confirmar Pago", businessMsBetween(deadline, Date.now()));
   recordStepTime(ticket, "Confirmar pago");
 
-  // Caso AUTOMÁTICO (solo tickets creados con la bandera autoPedido = cotización < 70000):
-  // no se pide "Agregar Pedido"; el # de pedido = # de cotización y el ticket avanza
-  // directo a Fabricación o Almacén según el tratamiento.
-  if (ticket.autoPedido === true && !ticket.pedidoNumber) {
+  // Caso AUTOMÁTICO (solo tickets NUEVOS —los que tienen el campo autoPedido— con
+  // cotización > 70000): no se pide "Agregar Pedido"; el # de pedido = # de cotización
+  // y el ticket avanza directo a Fabricación o Almacén según el tratamiento.
+  // El umbral se evalúa aquí (no con el valor guardado) para corregir también los
+  // tickets creados con la regla anterior.
+  if (isAutoPedidoTicket(ticket) && !ticket.pedidoNumber) {
     const target = findColumnByName(ticket.treatment); // "Fabricación" | "Almacén"
     const updates = {
       paymentConfirmed: true,
@@ -616,7 +628,7 @@ export async function confirmPayment(ticket, paymentMethod) {
     return;
   }
 
-  // Caso MANUAL (cotización ≥ 70000 o tickets sin la bandera): pasa por "Agregar Pedido".
+  // Caso MANUAL (cotización ≤ 70000 o tickets sin la bandera): pasa por "Agregar Pedido".
   const target = findColumnByName(ROUTING_COLUMN_NAMES.AGREGAR_PEDIDO);
   const updates = { paymentConfirmed: true, paymentMethod: method, updatedAt: serverTimestamp() };
   if (target) { updates.columnId = target.id; updates.lastMovedAt = serverTimestamp(); }
