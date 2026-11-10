@@ -12,7 +12,7 @@ import { computeSla, isFabricacionColumn, isAlmacenColumn, isCotizacionColumn, i
 import { getTicket, createTicket, updateTicket, moveTicket, setTicketStatus, deleteTicket,
   setProductionPromise, setWarehousePromise, setShippingCost,
   acceptShippingCost, markShippingPaid, rejectShippingCost, confirmPayment, addPedido,
-  closeByWarehouseWithShipping } from "./tickets.js";
+  closeByWarehouseWithShipping, setPrinted } from "./tickets.js";
 import { getUser, userName, sellableUsers } from "./users.js";
 import { listenComments, addComment, editComment, softDeleteComment, mentionSuggestions, highlightMentions } from "./comments.js";
 import { listenAttachments, uploadAttachment, deleteAttachment, isImage } from "./attachments.js";
@@ -51,10 +51,15 @@ function renderBoardColumns() {
   const filter = $("#board-status-filter").value || "Activo";
   const slaFilter = $("#board-sla-filter")?.value || ""; // "", "ontime", "late"
   const sort = $("#board-sort")?.value || ""; // "", "oldest", "recent"
+  const printFilter = $("#board-print-filter")?.value || ""; // "", "printed", "notprinted"
   const search = ($("#board-search")?.value || "").trim().toLowerCase();
   const tickets = visibleTickets(user, store.tickets)
     .filter((t) => (filter === "Todos" ? true : t.status === filter))
     .filter(vendorFilterMatch)
+    .filter((t) => {
+      if (!printFilter) return true;
+      return printFilter === "printed" ? t.printed === true : t.printed !== true;
+    })
     .filter((t) => {
       if (!slaFilter) return true;
       const sla = computeSla(t);
@@ -132,6 +137,11 @@ function cardHtml(t, user) {
         <div class="card-sla sla-await">🧾 Por confirmar pago</div>` : ""}
       ${isAgregarPedidoColumn(t) && t.status === "Activo" && !t.pedidoNumber ? `
         <div class="card-sla sla-await">🔢 Por agregar # de pedido</div>` : ""}
+      <label class="card-print ${t.printed ? "is-printed" : ""}" title="Pedido Impreso">
+        <input type="checkbox" class="card-print-chk" data-id="${t.id}"
+          ${t.printed ? "checked" : ""} ${can(user, "ticket:setPrinted", t) ? "" : "disabled"}>
+        <span>Pedido Impreso</span>
+      </label>
       <div class="card-footer">
         ${avatarHtml(owner, 24)}
         <span class="card-meta">
@@ -145,9 +155,32 @@ function cardHtml(t, user) {
 }
 
 function bindBoardEvents(container, user) {
-  // Abrir detalle
+  // Abrir detalle (excepto al usar la casilla "Pedido Impreso").
   $$(".card", container).forEach((card) => {
-    card.addEventListener("click", () => openTicketModal(card.dataset.id));
+    card.addEventListener("click", (e) => {
+      if (e.target.closest(".card-print")) return;
+      openTicketModal(card.dataset.id);
+    });
+  });
+
+  // Casilla "Pedido Impreso" en cada tarjeta.
+  $$(".card-print-chk", container).forEach((chk) => {
+    chk.addEventListener("click", (e) => e.stopPropagation());
+    chk.addEventListener("change", async () => {
+      const ticket = getTicket(chk.dataset.id);
+      if (!ticket) return;
+      const value = chk.checked;
+      chk.disabled = true;
+      try {
+        await setPrinted(ticket, value);
+        toast(value ? "Marcado como Pedido Impreso." : "Se quitó la marca de Pedido Impreso.", "success");
+      } catch (err) {
+        chk.checked = !value; // revierte si no se pudo guardar
+        toast("No se pudo actualizar: " + err.message, "error");
+      } finally {
+        chk.disabled = false;
+      }
+    });
   });
 
   // Drag & drop nativo (desktop). En móvil se usa "Mover a…" en el detalle.
