@@ -250,6 +250,26 @@ export async function setTicketStatus(ticket, status) {
   });
 }
 
+// Marca / desmarca "Pedido Impreso" desde la tarjeta. Guarda quién y cuándo.
+export async function setPrinted(ticket, printed) {
+  const user = store.currentUser;
+  const value = !!printed;
+  await updateDoc(doc(fb.db, "tickets", ticket.id), {
+    printed: value,
+    printedBy: value ? user.uid : null,
+    printedAt: value ? serverTimestamp() : null,
+    updatedAt: serverTimestamp(),
+  });
+  // El historial es best-effort: no debe impedir marcar la casilla.
+  try {
+    await logActivity(ticket.id, "updated",
+      value ? `${user.displayName} marcó el pedido como impreso.`
+            : `${user.displayName} desmarcó "Pedido Impreso".`);
+  } catch (err) {
+    console.warn("[pedido impreso] Guardado, pero no se pudo registrar en el historial:", err);
+  }
+}
+
 // Cierre por Almacén desde "Listos para recolección": registra la Fecha y Hora de
 // Envío, marca el ticket como Cerrado (la evidencia ya se subió antes) y notifica al
 // Responsable del ticket y a los Administradores de Ventas (in-app + Google Chat).
