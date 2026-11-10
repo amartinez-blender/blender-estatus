@@ -270,6 +270,16 @@ textarea.input { resize: vertical; }
   border-radius: 999px; padding: 2px 8px;
 }
 .card-footer { display: flex; align-items: center; gap: 8px; }
+/* Casilla "Pedido Impreso" en cada tarjeta */
+.card-print {
+  display: inline-flex; align-items: center; gap: 6px; margin: 0 0 8px;
+  font-size: 0.76rem; font-weight: 600; color: var(--color-text-muted);
+  padding: 3px 8px; border-radius: 999px; border: 1px solid var(--color-border);
+  cursor: pointer; user-select: none;
+}
+.card-print input { margin: 0; width: 14px; height: 14px; accent-color: var(--color-success); cursor: pointer; }
+.card-print input:disabled { cursor: not-allowed; }
+.card-print.is-printed { color: var(--color-success); border-color: var(--color-success); background: rgba(46, 158, 91, 0.10); }
 .card-meta { display: flex; gap: 8px; font-size: 0.74rem; color: var(--color-text-muted); }
 .card-time { margin-left: auto; font-size: 0.7rem; color: var(--color-gray); }
 
