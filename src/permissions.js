@@ -124,6 +124,11 @@ export function can(user, action, resource = null) {
       if (r === ROLES.SALES_EXEC) return resource?.ownerId === user.uid;
       return false;
 
+    // "Pedido Impreso": cualquier usuario operativo puede marcarlo en cualquier
+    // tarjeta (el Auditor es solo lectura).
+    case "ticket:setPrinted":
+      return r !== ROLES.AUDITOR;
+
     case "ticket:delete":
       return false; // solo SuperAdmin (cubierto arriba)
 
