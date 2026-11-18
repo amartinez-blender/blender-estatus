@@ -494,6 +494,8 @@ function bindStaticEvents() {
   $("#board-status-filter").addEventListener("change", renderBoard);
   $("#board-sla-filter").addEventListener("change", renderBoard);
   $("#board-sort")?.addEventListener("change", renderBoard);
+  $("#board-print-filter")?.addEventListener("change", renderBoard);
+  $("#board-creator-filter")?.addEventListener("change", renderBoard);
   $("#board-search")?.addEventListener("input", debounce(renderBoard, 200));
 
   // Notificaciones
