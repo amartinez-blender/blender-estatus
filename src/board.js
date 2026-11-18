@@ -53,8 +53,11 @@ function renderBoardColumns() {
   const sort = $("#board-sort")?.value || ""; // "", "oldest", "recent"
   const printFilter = $("#board-print-filter")?.value || ""; // "", "printed", "notprinted"
   const search = ($("#board-search")?.value || "").trim().toLowerCase();
-  const tickets = visibleTickets(user, store.tickets)
+  const allVisible = visibleTickets(user, store.tickets);
+  const creatorFilter = fillCreatorFilter(allVisible); // uid o ""
+  const tickets = allVisible
     .filter((t) => (filter === "Todos" ? true : t.status === filter))
+    .filter((t) => (!creatorFilter ? true : t.createdBy === creatorFilter))
     .filter(vendorFilterMatch)
     .filter((t) => {
       if (!printFilter) return true;
@@ -102,6 +105,26 @@ function renderBoardColumns() {
   }).join("");
 
   bindBoardEvents(container, user);
+}
+
+// Llena el menú "Creado por" con las personas que han creado tarjetas
+// (ordenadas por nombre) y conserva la selección actual. Devuelve el uid elegido.
+function fillCreatorFilter(tickets) {
+  const sel = $("#board-creator-filter");
+  if (!sel) return "";
+  const current = sel.value;
+  const creators = [...new Set(tickets.map((t) => t.createdBy).filter(Boolean))]
+    .map((uid) => ({ uid, name: userName(uid) || "Usuario" }))
+    .sort((a, b) => a.name.localeCompare(b.name, "es"));
+  const signature = creators.map((c) => c.uid + ":" + c.name).join("|");
+  if (sel.dataset.sig !== signature) {
+    sel.innerHTML = `<option value="">Creado por: todos</option>` +
+      creators.map((c) => `<option value="${escapeHtml(c.uid)}">${escapeHtml(c.name)}</option>`).join("");
+    sel.dataset.sig = signature;
+  }
+  // Si la persona elegida ya no aparece (p. ej. no hay tarjetas suyas), vuelve a "todos".
+  sel.value = creators.some((c) => c.uid === current) ? current : "";
+  return sel.value;
 }
 
 function cardHtml(t, user) {
